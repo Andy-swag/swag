@@ -1964,3 +1964,7 @@ select.picked { display: none; }
 .td-quick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .td-quick-chip { height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg); color: var(--fg-2); font-size: 11.5px; cursor: pointer; }
 .td-quick-chip:hover { border-color: var(--fg); color: var(--fg); }
+.pool-modal.compact { max-width: 400px; }
+.pool-confirm-msg { margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--fg-2); }
+.btn.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+.btn.danger:hover { background: #b91c1c; border-color: #b91c1c; }

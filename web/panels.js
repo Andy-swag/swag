@@ -27,6 +27,71 @@
   };
   const barColor = (rem) => (rem >= 50 ? "#22c55e" : rem >= 20 ? "#f59e0b" : "#ef4444");
 
+  function openConfirmModal({ title, message, confirmText = "确定", danger = false }, esc) {
+    return new Promise((resolve) => {
+      const bg = document.createElement("div");
+      bg.className = "pool-modal-bg";
+      bg.innerHTML = `<div class="pool-modal compact" role="dialog" aria-modal="true">
+        <div class="pool-modal-head">
+          <h3>${esc(title || "请确认")}</h3>
+          <button type="button" class="pool-ico-btn" data-cm-no title="关闭">✕</button>
+        </div>
+        <div class="pool-modal-body"><p class="pool-confirm-msg">${esc(message || "")}</p></div>
+        <div class="pool-modal-foot">
+          <span class="grow"></span>
+          <button type="button" class="btn small" data-cm-no>取消</button>
+          <button type="button" class="btn ${danger ? "danger" : "primary"} small" id="cm-yes">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+      const finish = (v) => { document.removeEventListener("keydown", onKey); bg.remove(); resolve(v); };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") finish(false);
+        else if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); finish(true); }
+      };
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(bg);
+      bg.querySelector("#cm-yes")?.focus();
+      bg.addEventListener("click", (ev) => {
+        if (ev.target === bg || ev.target.closest("[data-cm-no]")) finish(false);
+        else if (ev.target.closest("#cm-yes")) finish(true);
+      });
+    });
+  }
+
+  function openInputModal({ title, label, placeholder = "", confirmText = "确定" }, esc) {
+    return new Promise((resolve) => {
+      const bg = document.createElement("div");
+      bg.className = "pool-modal-bg";
+      bg.innerHTML = `<div class="pool-modal compact" role="dialog" aria-modal="true">
+        <div class="pool-modal-head">
+          <h3>${esc(title || "请输入")}</h3>
+          <button type="button" class="pool-ico-btn" data-im-no title="关闭">✕</button>
+        </div>
+        <div class="pool-modal-body">
+          <label class="pool-field">${esc(label || "")}<input data-im-val class="mono" placeholder="${esc(placeholder)}"></label>
+        </div>
+        <div class="pool-modal-foot">
+          <span class="grow"></span>
+          <button type="button" class="btn small" data-im-no>取消</button>
+          <button type="button" class="btn primary small" id="im-yes">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+      const inp = bg.querySelector("[data-im-val]");
+      const finish = (v) => { document.removeEventListener("keydown", onKey); bg.remove(); resolve(v); };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") finish("");
+        else if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); finish((inp?.value || "").trim()); }
+      };
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(bg);
+      inp?.focus();
+      bg.addEventListener("click", (ev) => {
+        if (ev.target === bg || ev.target.closest("[data-im-no]")) finish("");
+        else if (ev.target.closest("#im-yes")) finish((inp?.value || "").trim());
+      });
+    });
+  }
+
   async function renderUsage(body, api, esc, toast, days = 7, fresh = false) {
     const gen = body._autoGen;
     body.innerHTML = `<p class="panel-intro">正在聚合所有在线机器的 Token 使用数据…</p>`;
@@ -410,10 +475,10 @@
       };
 
       bg.addEventListener("click", (ev) => { if (ev.target === bg || ev.target.closest("[data-pm-close]")) close(); });
-      bg.addEventListener("change", (ev) => {
+      bg.addEventListener("change", async (ev) => {
         const mSel = ev.target.closest("select[data-pf^=mm_]");
         if (mSel && mSel.value === "__custom") {
-          const v = (prompt("手动输入上游模型 ID") || "").trim();
+          const v = await openInputModal({ title: "自定义上游模型 ID", label: "模型 ID", placeholder: "例如：gpt-5.4 / claude-sonnet-4-6" }, esc);
           if (v) mSel.add(new Option(v, v, true, true), 1);
           else mSel.value = "";
         }
@@ -456,7 +521,12 @@
         } catch (err) { toast(err.message, "attn"); btn.disabled = false; btn.textContent = "保存"; }
       });
       bg.querySelector("#pm-del")?.addEventListener("click", async () => {
-        if (!confirm(`确定删除通道「${orig.name || orig.id}」？`)) return;
+        if (!(await openConfirmModal({
+          title: `删除通道「${orig.name || orig.id}」`,
+          message: "删除后该通道将从模型池与所有档位故障切换链中移除。",
+          confirmText: "确认删除",
+          danger: true,
+        }, esc))) return;
         try {
           const nextProvs = provs.filter((_, i) => i !== idx);
           const nextTiers = collectTiers().map((t) => ({ ...t, providers: t.providers.filter((id) => id !== orig.id) }));
@@ -958,7 +1028,13 @@
 
   async function recallMsg(id, api, toast, onRemoved, inputEl) {
     if (!id) return;
-    if (!confirm("确定撤回这条消息？若 Swag 尚未读取将直接拦截；若已开始处理会通知其忽略。")) return;
+    const escTxt = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+    if (!(await openConfirmModal({
+      title: "撤回这条消息",
+      message: "若 Swag 尚未读取将直接拦截；若已开始处理会自动通知其忽略，原文字会回填到输入框方便重新编辑。",
+      confirmText: "确认撤回",
+      danger: true,
+    }, escTxt))) return;
     try {
       const r = await api("/api/super/recall", { body: { id } });
       if (onRemoved) onRemoved(id);
@@ -1201,14 +1277,24 @@
         }
         if (e.target.closest("#td-clear-done")) {
           const doneIds = todos.filter((t) => t.status === "done").map((t) => t.id);
-          if (doneIds.length && confirm(`确定清空全部 ${doneIds.length} 条已完成待办？`)) runBatch(doneIds, "delete");
+          if (doneIds.length && await openConfirmModal({
+            title: `清空 ${doneIds.length} 条已完成待办`,
+            message: "清空后将永久移除这些已完成记录，无法恢复。",
+            confirmText: "确认清空",
+            danger: true,
+          }, esc)) runBatch(doneIds, "delete");
           return;
         }
         const batchBtn = e.target.closest("[data-td-batch]");
         if (batchBtn) {
           const ids = [...todoSelected];
           const act = batchBtn.dataset.tdBatch;
-          if (act === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待办？`)) return;
+          if (act === "delete" && !(await openConfirmModal({
+            title: `删除选中的 ${ids.length} 条待办`,
+            message: "删除后无法恢复，确定继续？",
+            confirmText: "确认删除",
+            danger: true,
+          }, esc))) return;
           runBatch(ids, act);
           return;
         }
