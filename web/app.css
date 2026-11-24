@@ -1954,3 +1954,13 @@ select.picked { display: none; }
 .todo-chk { width: 19px; height: 19px; border-radius: 6px; border: 1.5px solid var(--line-2); background: var(--bg); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; margin-top: 2px; font-size: 11.5px; transition: all .14s; }
 .todo-chk.td-chk-done { background: #10b981; border-color: #10b981; }
 .todo-card.is-done .pi-title { text-decoration: line-through; color: var(--fg-3); }
+.todo-card.is-sel { border-color: var(--fg); background: var(--bg-2); }
+.td-batch-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-2); font-size: 12.5px; }
+.td-sel-chk { width: 17px; height: 17px; margin-top: 3px; accent-color: var(--fg); cursor: pointer; flex: none; }
+.td-dispatch-list { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2); font-size: 12.5px; color: var(--fg-2); }
+.td-dispatch-item { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.td-dispatch-item:last-child { padding-bottom: 0; border-bottom: 0; }
+.td-dispatch-item b { color: var(--fg); font-weight: 600; }
+.td-quick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.td-quick-chip { height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg); color: var(--fg-2); font-size: 11.5px; cursor: pointer; }
+.td-quick-chip:hover { border-color: var(--fg); color: var(--fg); }

@@ -4512,9 +4512,7 @@
       ${pinActBtn(e.id, pinned)}
       ${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}</div>` : "";
   // Under your own message, at its right edge: when you said it, copy, and pin.
-  const mineActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}
-      <button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>
-      ${pinActBtn(e.id, pinned)}</div>` : "";
+  const mineActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}<button type="button" class="recall-btn" data-recall="${esc(e.id)}" title="撤回消息" aria-label="撤回消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button><button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>${pinActBtn(e.id, pinned)}</div>` : "";
   async function copyText(t) {
     if (navigator.clipboard && window.isSecureContext) {
       try { await navigator.clipboard.writeText(t); return true; } catch {}
@@ -4588,6 +4586,8 @@
     });
   }
   document.addEventListener("click", async (ev) => {
+    const rb = ev.target.closest(".recall-btn[data-recall]");
+    if (rb) { ev.preventDefault(); window.SwagPanels?.recallMsg?.(rb.dataset.recall, api, toast, (id) => { sup.entries = (sup.entries || []).filter((x) => x.id !== id); renderSuper(); }, $("#super-input")); return; }
     const pb = ev.target.closest(".pin-btn[data-pin]");
     if (pb) { ev.preventDefault(); togglePin(pb.dataset.pin); return; }
     const b = ev.target.closest("[data-copy]");

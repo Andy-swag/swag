@@ -883,9 +883,93 @@
   let todoFilter = "open";
   let todoSrc = "all";
   let todoQuery = "";
+  let todoBatchMode = false;
+  const todoSelected = new Set();
+
+  function openDispatchModal(items, esc, toast, onDispatch) {
+    const list = (items || []).filter(Boolean);
+    if (!list.length || !onDispatch) return;
+    const bg = document.createElement("div");
+    bg.className = "pool-modal-bg";
+    const quickChips = [
+      "先只读核查上下文与风险点，给我结论，不要执行写操作或代批",
+      "帮我梳理行动方案与下一步建议",
+      "帮我起草回复内容给我确认",
+      "按常规方式直接推进并在关键节点向我汇报",
+    ];
+    bg.innerHTML = `<div class="pool-modal" role="dialog" aria-modal="true">
+      <div class="pool-modal-head">
+        <h3>${list.length > 1 ? `批量派给 Swag（${list.length} 条待办）` : "派给 Swag 处理"}</h3>
+        <button type="button" class="pool-ico-btn" data-dm-close title="关闭">✕</button>
+      </div>
+      <div class="pool-modal-body">
+        <div class="td-dispatch-list">
+          ${list.map((t, i) => `<div class="td-dispatch-item"><b>${list.length > 1 ? `${i + 1}. ` : ""}${esc(t.title)}</b>${t.detail ? `<span>${esc(t.detail.slice(0, 140))}</span>` : ""}${t.link ? `<span class="mono" style="font-size:11px;opacity:.8">${esc(t.link)}</span>` : ""}</div>`).join("")}
+        </div>
+        <div class="td-quick-chips">
+          ${quickChips.map((q) => `<button type="button" class="td-quick-chip" data-dm-chip="${esc(q)}">${esc(q.slice(0, 16))}${q.length > 16 ? "…" : ""}</button>`).join("")}
+        </div>
+        <label class="pool-field">给 Swag 的要求 / Prompt（留空则按默认要求处理，Cmd/Ctrl+Enter 发送）
+          <textarea data-dm-prompt placeholder="例如：只读检查这个工单的 SQL 风险并总结给我，千万不要自动审批…"></textarea>
+        </label>
+      </div>
+      <div class="pool-modal-foot">
+        <span class="grow"></span>
+        <button type="button" class="btn small" data-dm-close>取消</button>
+        <button type="button" class="btn primary small" id="dm-send">发送给 Swag</button>
+      </div>
+    </div>`;
+    const close = () => { document.removeEventListener("keydown", onEsc); bg.remove(); };
+    const onEsc = (ev) => { if (ev.key === "Escape") close(); };
+    document.addEventListener("keydown", onEsc);
+    document.body.appendChild(bg);
+    const ta = bg.querySelector("[data-dm-prompt]");
+    ta?.focus();
+
+    const doSend = () => {
+      const promptTxt = (ta?.value || "").trim();
+      const bodyBlocks = list.map((t, i) => {
+        const prefix = list.length > 1 ? `${i + 1}. ` : "";
+        return `${prefix}「${t.title}」${t.detail ? "\n   补充：" + t.detail : ""}${t.link ? "\n   链接：" + t.link : ""}`;
+      }).join("\n");
+      const msg = promptTxt
+        ? `${promptTxt}\n\n关联待办：\n${bodyBlocks}`
+        : `帮我处理以下待办：\n${bodyBlocks}`;
+      close();
+      onDispatch(msg);
+    };
+
+    bg.addEventListener("click", (ev) => {
+      if (ev.target === bg || ev.target.closest("[data-dm-close]")) { close(); return; }
+      const chip = ev.target.closest("[data-dm-chip]");
+      if (chip && ta) { ta.value = chip.dataset.dmChip; ta.focus(); }
+    });
+    bg.querySelector("#dm-send")?.addEventListener("click", doSend);
+    ta?.addEventListener("keydown", (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") { ev.preventDefault(); doSend(); }
+    });
+  }
+
+  async function recallMsg(id, api, toast, onRemoved, inputEl) {
+    if (!id) return;
+    if (!confirm("确定撤回这条消息？若 Swag 尚未读取将直接拦截；若已开始处理会通知其忽略。")) return;
+    try {
+      const r = await api("/api/super/recall", { body: { id } });
+      if (onRemoved) onRemoved(id);
+      if (inputEl && !inputEl.value.trim() && r.text) {
+        inputEl.value = r.text;
+        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      toast(r.cancelled_queued ? "已撤回（Swag 尚未收到，已拦截）" : "已撤回消息（已通知 Swag 忽略）");
+    } catch (err) {
+      toast(err.message, "attn");
+    }
+  }
 
   async function renderTodos(body, api, esc, toast, onDispatch) {
-    body.innerHTML = `<p class="panel-intro">正在加载待办、进行中任务与待审批事项…</p>`;
+    if (!body.querySelector(".td-wrap")) {
+      body.innerHTML = `<p class="panel-intro">正在加载待办、进行中任务与待审批事项…</p>`;
+    }
     let data;
     try {
       data = await api("/api/super/todos");
@@ -893,17 +977,39 @@
       body.innerHTML = `<p class="panel-intro">读取待办失败：${esc(err.message)}</p>`;
       return;
     }
-    const todos = data.todos || [];
+    let todos = data.todos || [];
     const liveTasks = data.live_tasks || [];
     const pending = data.pending || [];
-    const badge = document.querySelector("#todo-badge");
-    if (badge) {
-      const n = data.open_count || 0;
-      badge.hidden = !n;
-      badge.textContent = n || "";
-    }
+
+    const syncTodoBadge = () => {
+      const openTodos = todos.filter((t) => t.status !== "done").length;
+      const total = openTodos + liveTasks.length + pending.length;
+      const badge = document.querySelector("#todo-badge");
+      if (badge) {
+        badge.hidden = !total;
+        badge.textContent = total || "";
+      }
+      return total;
+    };
+    syncTodoBadge();
+
+    const silentReload = async () => {
+      try {
+        const fresh = await api("/api/super/todos");
+        todos = fresh.todos || [];
+        syncTodoBadge();
+        paint();
+      } catch {}
+    };
 
     const paint = () => {
+      const prevScroll = body.scrollTop;
+      const activeSearch = document.activeElement?.id === "td-search";
+      const prevPos = activeSearch ? document.activeElement.selectionStart : null;
+
+      const existingIds = new Set(todos.map((t) => t.id));
+      for (const id of [...todoSelected]) if (!existingIds.has(id)) todoSelected.delete(id);
+
       const q = todoQuery.trim().toLowerCase();
       const matchQ = (s) => !q || String(s || "").toLowerCase().includes(q);
       const showPend = todoFilter !== "done" && (todoSrc === "all" || todoSrc === "pending")
@@ -961,14 +1067,18 @@
         </div>
       </div>`).join("");
 
+      const todoById = new Map(todos.map((t) => [t.id, t]));
       const todoHTML = showTodos.map((t) => {
         const done = t.status === "done";
+        const sel = todoBatchMode && todoSelected.has(t.id);
         const srcLab = t.source === "feishu" ? "飞书" : t.source === "agent" ? "助手" : "手动";
         const priTag = t.priority === "high"
           ? `<span class="pi-tag pi-pri-high">高优先</span>`
           : t.priority === "low" ? `<span class="pi-tag pi-pri-low">低</span>` : "";
-        return `<div class="pi-card todo-card ${done ? "is-done" : ""}" data-td-id="${esc(t.id)}">
-          <button type="button" class="todo-chk ${done ? "td-chk-done" : ""}" data-td-toggle="${esc(t.id)}" title="${done ? "标为未完成" : "标为已完成"}">${done ? "✓" : ""}</button>
+        return `<div class="pi-card todo-card ${done ? "is-done" : ""} ${sel ? "is-sel" : ""}" data-td-id="${esc(t.id)}">
+          ${todoBatchMode
+            ? `<input type="checkbox" class="td-sel-chk" data-td-sel="${esc(t.id)}" ${sel ? "checked" : ""}>`
+            : `<button type="button" class="todo-chk ${done ? "td-chk-done" : ""}" data-td-toggle="${esc(t.id)}" title="${done ? "标为未完成" : "标为已完成"}">${done ? "✓" : ""}</button>`}
           <div class="pi-body">
             <div class="pi-top">
               <div class="pi-title">${esc(t.title)}<span class="pi-tag">${esc(srcLab)}</span>${priTag}${t.due ? `<span class="pi-tag">${esc(t.due)}</span>` : ""}</div>
@@ -979,14 +1089,14 @@
               <span class="pi-status"><span class="pi-dot ${done ? "pi-dot-done" : "pi-dot-need"}"></span>${done ? "已完成" : "待处理"}</span>
               <span class="grow"></span>
               ${t.link ? `<a class="btn ghost small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(t.link)}" target="_blank" rel="noopener">原链接</a>` : ""}
-              ${!done ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`帮我处理这条待办：「${t.title}」${t.detail ? "\n补充信息：" + t.detail : ""}${t.link ? "\n链接：" + t.link : ""}`)}">派给 Swag</button>` : ""}
-              <button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-del="${esc(t.id)}">删除</button>
+              ${!done && !todoBatchMode ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-dispatch="${esc(t.id)}">派给 Swag</button>` : ""}
+              ${!todoBatchMode ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-del="${esc(t.id)}">删除</button>` : ""}
             </div>
           </div>
         </div>`;
       }).join("");
 
-      const openTotal = data.open_count || 0;
+      const openTotal = syncTodoBadge();
       const doneTotal = todos.filter((t) => t.status === "done").length;
       const srcChips = [
         ["all", "全部"],
@@ -995,6 +1105,18 @@
         ["feishu", "飞书待办"],
         ["manual", "手动待办"],
       ];
+      const visTodoIds = showTodos.map((t) => t.id);
+      const selCount = todoSelected.size;
+      const allVisSelected = visTodoIds.length > 0 && visTodoIds.every((id) => todoSelected.has(id));
+      const batchBarHTML = todoBatchMode ? `<div class="td-batch-bar">
+        <button type="button" class="btn small" id="td-sel-all">${allVisSelected ? "取消全选" : `全选当前 (${visTodoIds.length})`}</button>
+        <span class="muted">已选 <b>${selCount}</b> 项</span>
+        <span class="grow"></span>
+        <button type="button" class="btn small" data-td-batch="done" ${selCount ? "" : "disabled"}>✓ 批量完成</button>
+        ${todoFilter === "done" ? `<button type="button" class="btn small" data-td-batch="open" ${selCount ? "" : "disabled"}>↺ 批量恢复</button>` : ""}
+        <button type="button" class="btn small" id="td-batch-dispatch" ${selCount ? "" : "disabled"}>⚡ 批量派给 Swag</button>
+        <button type="button" class="btn small" style="color:#ef4444" data-td-batch="delete" ${selCount ? "" : "disabled"}>批量删除</button>
+      </div>` : "";
 
       body.innerHTML = `<div class="td-wrap">
         <div class="pi-bar">
@@ -1004,8 +1126,11 @@
             <button type="button" class="pi-tab ${todoFilter === "all" ? "on" : ""}" data-tdf="all">全部</button>
           </div>
           <span class="grow"></span>
+          ${todoFilter === "done" && doneTotal && !todoBatchMode ? `<button type="button" class="btn ghost small" id="td-clear-done">清空已完成</button>` : ""}
+          ${todos.length ? `<button type="button" class="btn ${todoBatchMode ? "primary" : ""} small" id="td-batch-toggle">${todoBatchMode ? "完成管理" : "批量管理"}</button>` : ""}
           <button type="button" class="btn primary small" id="td-add">+ 新建待办</button>
         </div>
+        ${batchBarHTML}
         <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="搜索待办标题、详情、来源…">
         <div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>
         <div class="pi-list">
@@ -1014,12 +1139,81 @@
         </div>
       </div>`;
 
+      body.scrollTop = prevScroll;
+      if (activeSearch) {
+        const s = body.querySelector("#td-search");
+        if (s) { s.focus(); if (prevPos != null) s.setSelectionRange(prevPos, prevPos); }
+      }
+
+      const runBatch = async (ids, action) => {
+        if (!ids.length) return;
+        const idSet = new Set(ids);
+        if (action === "delete") {
+          todos = todos.filter((t) => !idSet.has(t.id));
+        } else {
+          todos = todos.map((t) => (idSet.has(t.id) ? { ...t, status: action, updated_at: new Date().toISOString() } : t));
+        }
+        ids.forEach((id) => todoSelected.delete(id));
+        paint();
+        try {
+          await api("/api/super/todos/batch", { body: { ids, action } });
+          toast(action === "delete" ? `已批量删除 ${ids.length} 条待办` : action === "done" ? `已批量完成 ${ids.length} 条待办` : `已恢复 ${ids.length} 条待办`);
+        } catch (err) {
+          toast(err.message, "attn");
+          silentReload();
+        }
+      };
+
       const wrap = body.querySelector(".td-wrap");
+      wrap.addEventListener("change", (e) => {
+        const chk = e.target.closest("[data-td-sel]");
+        if (chk) {
+          const id = chk.dataset.tdSel;
+          if (chk.checked) todoSelected.add(id); else todoSelected.delete(id);
+          paint();
+        }
+      });
       wrap.addEventListener("click", async (e) => {
         const tf = e.target.closest("[data-tdf]");
         if (tf) { todoFilter = tf.dataset.tdf; paint(); return; }
         const ts = e.target.closest("[data-tds]");
         if (ts) { todoSrc = ts.dataset.tds; paint(); return; }
+        if (e.target.closest("#td-batch-toggle")) {
+          todoBatchMode = !todoBatchMode;
+          if (!todoBatchMode) todoSelected.clear();
+          paint();
+          return;
+        }
+        if (e.target.closest("#td-sel-all")) {
+          if (allVisSelected) visTodoIds.forEach((id) => todoSelected.delete(id));
+          else visTodoIds.forEach((id) => todoSelected.add(id));
+          paint();
+          return;
+        }
+        if (e.target.closest("#td-clear-done")) {
+          const doneIds = todos.filter((t) => t.status === "done").map((t) => t.id);
+          if (doneIds.length && confirm(`确定清空全部 ${doneIds.length} 条已完成待办？`)) runBatch(doneIds, "delete");
+          return;
+        }
+        const batchBtn = e.target.closest("[data-td-batch]");
+        if (batchBtn) {
+          const ids = [...todoSelected];
+          const act = batchBtn.dataset.tdBatch;
+          if (act === "delete" && !confirm(`确定删除选中的 ${ids.length} 条待办？`)) return;
+          runBatch(ids, act);
+          return;
+        }
+        if (e.target.closest("#td-batch-dispatch")) {
+          const items = [...todoSelected].map((id) => todoById.get(id)).filter(Boolean);
+          openDispatchModal(items, esc, toast, (msg) => { todoBatchMode = false; todoSelected.clear(); onDispatch(msg); });
+          return;
+        }
+        const disp = e.target.closest("[data-td-dispatch]");
+        if (disp) {
+          const item = todoById.get(disp.dataset.tdDispatch);
+          if (item) openDispatchModal([item], esc, toast, onDispatch);
+          return;
+        }
         const exp = e.target.closest("[data-td-expand]");
         if (exp) {
           const k = exp.dataset.tdExpand;
@@ -1036,20 +1230,29 @@
         if (ask && onDispatch) { onDispatch(ask.dataset.tdAsk); return; }
         const tog = e.target.closest("[data-td-toggle]");
         if (tog) {
-          try { await api(`/api/super/todos/${encodeURIComponent(tog.dataset.tdToggle)}`, { body: {} }); renderTodos(body, api, esc, toast, onDispatch); }
-          catch (err) { toast(err.message, "attn"); }
+          const id = tog.dataset.tdToggle;
+          const prev = todos.find((t) => t.id === id);
+          if (!prev) return;
+          const nextStatus = prev.status === "done" ? "open" : "done";
+          todos = todos.map((t) => (t.id === id ? { ...t, status: nextStatus, updated_at: new Date().toISOString() } : t));
+          paint();
+          try { await api(`/api/super/todos/${encodeURIComponent(id)}`, { body: { status: nextStatus } }); }
+          catch (err) { toast(err.message, "attn"); silentReload(); }
           return;
         }
         const del = e.target.closest("[data-td-del]");
         if (del) {
-          try { await api(`/api/super/todos/${encodeURIComponent(del.dataset.tdDel)}`, { body: { delete: true } }); toast("已删除待办"); renderTodos(body, api, esc, toast, onDispatch); }
-          catch (err) { toast(err.message, "attn"); }
+          const id = del.dataset.tdDel;
+          todos = todos.filter((t) => t.id !== id);
+          paint();
+          try { await api(`/api/super/todos/${encodeURIComponent(id)}`, { body: { delete: true } }); toast("已删除待办"); }
+          catch (err) { toast(err.message, "attn"); silentReload(); }
           return;
         }
         if (e.target.closest("#td-add")) {
           openTodoModal({ modalTitle: "新建待办", source: todoSrc === "feishu" ? "feishu" : "manual", priority: "medium" }, api, esc, toast, {
             onDispatch,
-            onSaved: () => renderTodos(body, api, esc, toast, onDispatch),
+            onSaved: () => silentReload(),
           });
         }
       });
@@ -1061,5 +1264,5 @@
     paint();
   }
 
-  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos };
+  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg };
 })();

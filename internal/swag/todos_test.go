@@ -1,6 +1,9 @@
 package swag
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,5 +74,58 @@ func TestTodoOpenCountIncludesTasksAndTodos(t *testing.T) {
 
 	if got := sp.todoOpenCountLocked(time.Now()); got != 2 {
 		t.Fatalf("expected 2 open todos (1 todo + 1 active task), got %d", got)
+	}
+}
+
+func TestTodoBatchAndMessageRecall(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{dir: tmp, st: &State{}, subs: map[chan struct{}]bool{}}
+	s := &Server{sup: sp}
+
+	_ = saveTodos([]TodoItem{
+		{ID: "td-a", Title: "A", Status: "open"},
+		{ID: "td-b", Title: "B", Status: "open"},
+		{ID: "td-c", Title: "C", Status: "open"},
+	})
+
+	req := httptest.NewRequest("POST", "/api/super/todos/batch", bytes.NewReader([]byte(`{"ids":["td-a","td-b"],"action":"done"}`)))
+	rec := httptest.NewRecorder()
+	s.superTodoBatch(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("batch done failed: %d %s", rec.Code, rec.Body.String())
+	}
+	got := loadTodos()
+	doneCount := 0
+	for _, it := range got {
+		if it.Status == "done" {
+			doneCount++
+		}
+	}
+	if doneCount != 2 {
+		t.Fatalf("expected 2 done todos, got %d", doneCount)
+	}
+
+	req2 := httptest.NewRequest("POST", "/api/super/todos/batch", bytes.NewReader([]byte(`{"ids":["td-a","td-b"],"action":"delete"}`)))
+	rec2 := httptest.NewRecorder()
+	s.superTodoBatch(rec2, req2)
+	if rec2.Code != 200 || len(loadTodos()) != 1 {
+		t.Fatalf("batch delete failed: code=%d remaining=%d", rec2.Code, len(loadTodos()))
+	}
+
+	// Recall a queued user message: entry removed + queued trigger cancelled.
+	sp.st.Entries = []*Entry{{ID: "e10", Role: "user", Thread: mainThread, Text: "misclicked", At: time.Now()}}
+	sp.st.Triggers = []*Trigger{{ID: "t10", Source: "chat", Ref: "e10", Status: "queued", At: time.Now()}}
+	req3 := httptest.NewRequest("POST", "/api/super/recall", bytes.NewReader([]byte(`{"id":"e10"}`)))
+	rec3 := httptest.NewRecorder()
+	s.superRecall(rec3, req3)
+	if rec3.Code != 200 {
+		t.Fatalf("recall failed: %d %s", rec3.Code, rec3.Body.String())
+	}
+	var res map[string]any
+	_ = json.Unmarshal(rec3.Body.Bytes(), &res)
+	if res["cancelled_queued"] != true || len(sp.st.Entries) != 0 || sp.st.Triggers[0].Status != "ignored" {
+		t.Fatalf("unexpected recall state: res=%v entries=%d trig=%+v", res, len(sp.st.Entries), sp.st.Triggers[0])
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -422,4 +423,120 @@ func (s *Server) superInboxAck(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sup.broadcastSubs()
 	writeJSON(w, 200, map[string]any{"ok": true, "acked": len(ack)})
+}
+
+func (s *Server) superTodoBatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs    []string `json:"ids"`
+		Action string   `json:"action"` // done | open | delete
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	want := map[string]bool{}
+	for _, id := range body.IDs {
+		if id = strings.TrimSpace(id); id != "" {
+			want[id] = true
+		}
+	}
+	if len(want) == 0 {
+		writeJSON(w, 400, map[string]any{"error": "未选择待办"})
+		return
+	}
+	if body.Action != "done" && body.Action != "open" && body.Action != "delete" {
+		writeJSON(w, 400, map[string]any{"error": "不支持的批量操作"})
+		return
+	}
+	list := loadTodos()
+	next := make([]TodoItem, 0, len(list))
+	now := time.Now()
+	changed := 0
+	for _, t := range list {
+		if !want[t.ID] {
+			next = append(next, t)
+			continue
+		}
+		changed++
+		if body.Action == "delete" {
+			continue
+		}
+		t.Status = body.Action
+		t.UpdatedAt = now
+		next = append(next, t)
+	}
+	if err := saveTodos(next); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	s.sup.broadcastSubs()
+	writeJSON(w, 200, map[string]any{"ok": true, "changed": changed})
+}
+
+func (s *Server) superRecall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	id := strings.TrimSpace(body.ID)
+	if id == "" {
+		writeJSON(w, 400, map[string]any{"error": "id is required"})
+		return
+	}
+	sp := s.sup
+	sp.mu.Lock()
+	idx := -1
+	var recalled *Entry
+	for i, e := range sp.st.Entries {
+		if e.ID == id {
+			idx = i
+			recalled = e
+			break
+		}
+	}
+	if idx < 0 {
+		sp.mu.Unlock()
+		writeJSON(w, 404, map[string]any{"error": "未找到该消息"})
+		return
+	}
+	if recalled.Role != "user" {
+		sp.mu.Unlock()
+		writeJSON(w, 400, map[string]any{"error": "仅支持撤回自己发出的消息"})
+		return
+	}
+	text := recalled.Text
+	recent := time.Since(recalled.At) < 10*time.Minute
+	sp.st.Entries = append(sp.st.Entries[:idx], sp.st.Entries[idx+1:]...)
+	if pi := slices.Index(sp.st.Pinned, id); pi >= 0 {
+		sp.st.Pinned = append(sp.st.Pinned[:pi], sp.st.Pinned[pi+1:]...)
+	}
+	delete(sp.pinnedCache, id)
+	if sp.db != nil {
+		_, _ = sp.db.Exec(`DELETE FROM entries WHERE id = ?`, id)
+	}
+	cancelledQueued := false
+	alreadyDelivered := false
+	for _, t := range sp.st.Triggers {
+		if t.Source == "chat" && t.Ref == id {
+			if t.Status == "queued" {
+				t.Status = "ignored"
+				t.Action = "recalled"
+				cancelledQueued = true
+			} else {
+				alreadyDelivered = true
+			}
+		}
+	}
+	if alreadyDelivered && recent {
+		sp.ingestLocked("system", mainThread, "recall", "The human recalled their previous message (\""+clip(text, 120)+"\"). Ignore it and do not act on it unless asked again.", "", "", id)
+	}
+	sp.changed()
+	sp.mu.Unlock()
+	writeJSON(w, 200, map[string]any{
+		"ok":                true,
+		"text":              text,
+		"cancelled_queued":  cancelledQueued,
+		"already_delivered": alreadyDelivered,
+	})
 }
