@@ -298,11 +298,14 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 		cancel()
 	}
 	sp.closeWorkspaces(ctx, dreamLabel)
-	summary, skills, fixes := "", "", ""
+	summary, skills, fixes, scripts := "", "", "", ""
 	if ok {
 		sp.setLastDream(time.Now())
 		journal := filepath.Join(sp.routerDir(), "dreams", journalName(d.at)+".md")
-		summary, skills, fixes = dreamSummary(journal), dreamLine(journal, dreamSkillsPrefix), dreamLine(journal, dreamFixPrefix)
+		summary = dreamSummary(journal)
+		skills = dreamLine(journal, dreamSkillsPrefix)
+		fixes = dreamLine(journal, dreamFixPrefix)
+		scripts = dreamLine(journal, dreamScriptsPrefix)
 	}
 	sp.mu.Lock()
 	sp.dream = nil
@@ -327,6 +330,9 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	if fixes != "" {
 		sp.addEntryLocked("swag", mainThread, "整理记忆时发现已有的 skill 有地方不好用："+fixes+"。要改的话说一声，我派人去改。", "", "")
 	}
+	if scripts != "" {
+		sp.addEntryLocked("swag", mainThread, "整理记忆时发现这几个高频流程适合固化成脚本或流水线："+scripts+"。确认要落地的话说一声，我直接派人写成脚本并补单测。", "", "")
+	}
 	sp.mu.Unlock()
 	if syncMirror {
 		go sp.SyncMemoryMirrors(context.Background())
@@ -340,6 +346,9 @@ const dreamSkillsPrefix = "可做成 skill："
 
 // dreamFixPrefix starts the line naming existing skills that need fixing.
 const dreamFixPrefix = "可改进 skill："
+
+// dreamScriptsPrefix starts the line naming repeated flows ripe for a script or pipeline.
+const dreamScriptsPrefix = "可固化脚本/流水线："
 
 // journalName names one dream's journal: one file per run, so the hub reads
 // this run's summary, never an earlier one's from the same day.
@@ -388,8 +397,8 @@ func dreamSummary(path string) string {
 		return ""
 	}
 	for _, l := range strings.Split(string(b), "\n") {
-		if l = strings.TrimSpace(l); strings.HasPrefix(l, "#") || strings.HasPrefix(l, dreamSkillsPrefix) || strings.HasPrefix(l, dreamFixPrefix) {
-			continue // the title; the skills, said on their own
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "#") || strings.HasPrefix(l, dreamSkillsPrefix) || strings.HasPrefix(l, dreamFixPrefix) || strings.HasPrefix(l, dreamScriptsPrefix) {
+			continue // the title and structured proposal lines, surfaced on their own
 		}
 		l = strings.TrimSpace(strings.TrimLeft(l, ">-* "))
 		if l != "" {
@@ -511,23 +520,41 @@ func (sp *Super) writeDreamInput() error {
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-const dreamPrompt = `[swag] Dream. You are Swag's memory keeper, running while Swag sleeps. Swag is the agent described in ROUTER.md: read it for context and for the layout of memory/; your part is its memory. Your inputs, all in this directory:
+const dreamPrompt = `[swag] Dream. You are Swag's memory keeper and engineering curator, running while Swag sleeps. Swag is the agent described in ROUTER.md: read it for context and for the layout of memory/; your job is to keep its memory accurate, lean, and actionable. Your inputs, all in this directory:
 - memory/: Swag's memory, laid out as ROUTER.md describes.
-- dream/input.md: what happened since the last dream: the chat with the human and Swag's own session logs.
+- dream/input.md: what happened since the last dream: the chat with the human, Swag's session logs, and opted-in external sessions.
 - dreams/: earlier dream journals, if any.
-Run ` + "`{{BIN}} list`" + ` to see which agents are actually still around.
+Run ` + "`{{BIN}} list`" + ` to see which agents and machines are actually alive right now.
 {{MIGRATE}}
-Tidy memory/. Every session reads the up-front files (instructions.md, notes/index.md, open tasks) before anything else, so each line there has to earn its place: keep them under ~{{BUDGET}} KB together, and smaller is better.
-1. Replace stale entries: tasks that are finished, abandoned or whose agents are gone go to tasks/done/ with a last line on how they ended; facts the logs show have changed get fixed.
-2. Rewrite instructions.md line by line. Each line is one rule or preference, at most about 80 Chinese characters: what to do, not why, not the incidents behind it, not the steps. Move the steps, examples, dates and history into the note the line points to ("见 notes/x.md"). A routine a timer already runs keeps its how-to in the timer and its note, not here. Merge lines that say the same thing.
-3. Look for patterns that only show across sessions: requests the human repeats, corrections they keep making, preferences they never stated outright, mistakes Swag made more than once. Write the ones that should change how Swag behaves into instructions.md (or a note), marked "(inferred)", in the same short form. Each is backed by the logs and seen more than once.
-4. Finished work that taught something reusable (where data lives, the command or query that worked, a pitfall, where results are) belongs in notes/, filed by topic so the next similar job finds it; read the task files and the logs for it. Add what Swag missed; skip one-off details. Pointers (paths, thread ids, URLs), not copies; merge duplicates. Each note gets one line in notes/index.md. What the logs show about agents (which agent or model worked or failed on which computer, and at what) goes into notes/agents.md. Dated facts that are old enough to have changed: check them (` + "`{{BIN}} list`" + `, the files) and fix or drop them.
-5. Skills. Find the ones that exist (notes/skills.md says where they live; look there). A note whose how-to is now a skill shrinks to a pointer to it.
-   - A how-to in notes/ that three or more jobs have used, whose steps stopped changing and that no skill covers yet, could become one. The human decides about skills: list these on a line starting "可做成 skill：", separated by 、 (each a few words a human recognises, e.g. "Dorado 只读查表").
-   - An existing skill the logs show agents working around, failing with, or correcting by hand needs fixing: list it on a line starting "可改进 skill：" as "name（what to fix, a few words）", separated by 、.
-   Both lines go right under the journal's first line; the human gets them as messages from Swag. Leave a line out when it has nothing; a skill that already exists belongs on the second line or nowhere.
-6. Keep every explicit instruction from the human unless a later one overrides it (shortening its wording is fine). memory/messages.md is the hub's to write; read it as input.
+Tidy memory/ and maintain verified engineering knowledge. Every session reads the up-front files (instructions.md, notes/index.md, open tasks) before anything else, so each line there has to earn its place: keep them under ~{{BUDGET}} KB together, and smaller is better.
+1. Task progress & active stale/wrong-fact pruning:
+   - Update active tasks in memory/tasks/ with verified latest progress, blockers, and next steps from the logs.
+   - Move tasks that are finished, abandoned, or whose agents are gone to memory/tasks/done/ with a clear closing line on how they ended.
+   - Actively audit dated facts across memory/notes/ (host roles, commands, file paths, endpoints, model mappings) by checking ` + "`{{BIN}} list`" + ` and the filesystem: fix what changed and delete what is obsolete or wrong so stale lies never accumulate.
+2. Rewrite instructions.md line by line. Each line is one rule or preference, at most about 80 Chinese characters: what to do, not why, not the incidents behind it, not the steps. Move procedures, examples, dates and history into the note the line points to ("见 notes/x.md"). A routine a timer already runs keeps its how-to in the timer and its note, not here. Merge duplicate rules.
+3. Cross-session patterns & pitfalls (memory/notes/pitfalls.md):
+   - Capture hard-won lessons, recurring errors, root causes, gotchas, and exact verified commands/flags from today's logs into memory/notes/pitfalls.md (or the matching topic note), removing outdated workarounds once fixed.
+   - Look for patterns across sessions: repeated requests, corrections, unstated preferences, or mistakes Swag made more than once. Write lasting behavioral adjustments into instructions.md (or a note), marked "(inferred)", backed by logs.
+   - Record what the logs show about which agent or model worked or failed on which computer in memory/notes/agents.md.
+4. Reusable knowledge & pointers (memory/notes/):
+   - File reusable findings by topic so the next similar job finds them quickly. Prefer pointers (paths, thread ids, URLs) over bulky copies; merge duplicates. Every note gets one accurate line in memory/notes/index.md.
+5. Crystallize repeatable flows into Skills, Scripts, or Pipelines:
+   - Check existing skills (notes/skills.md says where they live). Shrink any note already covered by a skill to a pointer.
+   - "可做成 skill：": mature how-tos used across multiple jobs that no skill covers yet, separated by 、 (e.g. "SQL 只读查表").
+   - "可改进 skill：": existing skills that agents worked around, failed with, or fixed by hand, as "name（what to fix）", separated by 、.
+   - "可固化脚本/流水线：": repeated multi-step command sequences, health/data checks, or deploy/eval routines worth turning into a reusable script or automated pipeline (as "name（target repo/path & 1-line scope）", separated by 、). Optionally record high-value candidates via ` + "`{{BIN}} todo add --source agent --title \"...\" --detail \"...\"`" + ` so the human can approve and dispatch them in one click.
+   Put any non-empty proposal lines right under the journal's first line; omit empty ones.
+6. Opt-in local workspace knowledge & scratch hygiene (memory/notes/dream-workspaces.md):
+   - If memory/notes/dream-workspaces.md exists and lists local project workspaces present on this computer, maintain each listed workspace strictly within its declared scope:
+     a) Update/prune stale project knowledge docs (e.g. docs/lessons/, docs/agents/, runbooks, glossary) with today's verified findings and remove wrong/obsolete statements.
+     b) Clean expired, untracked temporary scratch files (e.g. tmp/ files older than the configured retention days and NOT referenced by any open file in memory/tasks/).
+   - Hard safety redlines: NEVER edit or delete uncommitted source code, NEVER delete tracked repo files without approval, NEVER run git push or destructive git resets, and NEVER touch live production services during Dream. List every workspace doc updated or scratch artifact cleaned in the dream journal.
+7. Keep every explicit instruction from the human unless a later one overrides it (tightening wording is fine). memory/messages.md is written by the hub; read it as input only.
 
-Then write a new file dreams/{{DATE}}.md. Its first line: one sentence in Chinese saying what you changed; the human sees it. Then the skill lines, if any. Then, in under 30 lines: what you changed and why, and patterns you noticed but didn't act on.
+Then write a new file dreams/{{DATE}}.md. Its first line: one concise sentence in Chinese summarizing what you learned, cleaned, and updated; the human sees it. Next, any non-empty proposal lines ("可做成 skill：" / "可改进 skill：" / "可固化脚本/流水线："). Then, in under 40 lines:
+- 新增经验与避坑
+- 清理的过时/错误信息与任务归档
+- 工作区文档更新与临时文件清理（如有）
+- 观察到但暂未改动的模式
 
-Your work is the files alone: when they are written, stop. Swag tells the human what you found.`
+Your work is the files alone (plus optional ` + "`{{BIN}} todo add --source agent`" + ` for script/pipeline proposals): when finished, stop. Swag reports your findings to the human.`

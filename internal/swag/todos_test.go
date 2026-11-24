@@ -129,3 +129,17 @@ func TestTodoBatchAndMessageRecall(t *testing.T) {
 		t.Fatalf("unexpected recall state: res=%v entries=%d trig=%+v", res, len(sp.st.Entries), sp.st.Triggers[0])
 	}
 }
+
+func TestDreamJournalParsesScriptsAndSummary(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "2026-11-25-0400.md")
+	content := "# Dream\n更新了避坑记录并清理了 2 条过时主机信息。\n可做成 skill：日志自动归因\n可固化脚本/流水线：夜间巡检脚本（scripts/night-check.sh）\n- 详情\n"
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := dreamSummary(p); got != "更新了避坑记录并清理了 2 条过时主机信息。" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+	if got := dreamLine(p, dreamScriptsPrefix); got != "夜间巡检脚本（scripts/night-check.sh）" {
+		t.Fatalf("unexpected scripts line: %q", got)
+	}
+}
