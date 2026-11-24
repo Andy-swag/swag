@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Swag — 多机 Super Agent 控制台</title>
-  <meta name="description" content="自托管多机 Super Agent 控制台与任务调度底座：Go 单二进制 + 出站 yamux 隧道 + 统一收件箱与待办中心 + 多通道模型反代池 + 飞书卡片原位审批。">
+  <meta name="description" content="自托管多机 Super Agent 控制台与任务调度底座：Go 单二进制 + 出站 yamux 隧道 + 手机 PWA 与飞书原位审批 + 服务端统一收件箱与待办中心 + 多通道模型反代池。">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -20,7 +20,8 @@
         <span class="brand-ver">v0.7</span>
       </a>
       <nav class="nav" aria-label="Primary">
-        <a href="#arch" data-i18n="nav.arch">架构</a>
+        <a href="#mobile" data-i18n="nav.mobile">手机 &amp; 飞书</a>
+        <a href="#arch" data-i18n="nav.arch">架构拓扑</a>
         <a href="#features" data-i18n="nav.features">核心能力</a>
         <a href="#start" data-i18n="nav.start">快速开始</a>
         <a href="https://github.com/Andy-swag/swag" target="_blank" rel="noopener">GitHub</a>
@@ -40,17 +41,17 @@
             <div>
               <div class="eyebrow"><span class="live-dot"></span><span data-i18n="hero.eyebrow">单二进制 Go 服务 · 自托管 · MIT 开源</span></div>
               <h1>
-                <span data-i18n="hero.h1a">把多台电脑上的 </span><span class="serif" data-i18n="hero.h1b">AI Agent</span><span data-i18n="hero.h1c"> 收进同一个控制台。</span>
+                <span data-i18n="hero.h1a">把多台电脑上的 </span><span class="serif" data-i18n="hero.h1b">AI Agent</span><span data-i18n="hero.h1c">，带在手机与飞书里。</span>
               </h1>
             </div>
             <div class="hero-side">
-              <p class="lede" data-i18n="hero.lede">Swag 用出站 yamux 隧道把常驻服务器、算力节点与个人笔记本连成一套个人 Super Agent 调度底座——内置服务端统一的收件箱与待办中心、OpenAI 兼容多通道故障切换模型池，以及飞书卡片原位审批回调。</p>
+              <p class="lede" data-i18n="hero.lede">Swag 用出站 yamux 隧道把常驻服务器、GPU 算力节点与个人 Mac 连成一套个人 Super Agent 调度底座——桌面 Web、手机 PWA 与飞书卡片实时同步，内置服务端统一收件箱/待办、模型反代池与夜间记忆做梦。</p>
               <div class="cta-row">
                 <a class="btn primary" href="https://github.com/Andy-swag/swag" target="_blank" rel="noopener">
                   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18a10.9 10.9 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.39-5.26 5.67.42.36.79 1.07.79 2.16v3.2c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
                   <span data-i18n="hero.cta.gh">前往 GitHub</span>
                 </a>
-                <a class="btn" href="#start" data-i18n="hero.cta.start">3 分钟部署</a>
+                <a class="btn" href="#start" data-i18n="hero.cta.start">3 分钟自托管</a>
               </div>
             </div>
           </div>
@@ -59,24 +60,24 @@
             <span>Claude Code</span>
             <span>OpenAI Codex</span>
             <span>Antigravity</span>
-            <span>Feishu / Lark WebSocket</span>
-            <span>SQLite WAL · Zero Build UI</span>
-            <span>macOS &amp; Linux</span>
+            <span>iOS / Android PWA</span>
+            <span>Feishu Card 2.0 Callback</span>
+            <span>SQLite WAL · Zero Build</span>
           </div>
 
-          <!-- Interactive Live Control Deck Preview -->
-          <div class="stage-wrap">
+          <!-- Interactive Desktop Control Deck + iPhone 16 Pro Stage -->
+          <div class="stage-wrap reveal in">
             <div class="deck-frame">
               <div class="deck-chrome">
                 <div class="dots"><i></i><i></i><i></i></div>
-                <span class="chrome-url">http://127.0.0.1:17788 · Swag Control Deck (Interactive Preview)</span>
+                <span class="chrome-url">http://127.0.0.1:17788 · Swag Control Deck</span>
                 <span class="chrome-pill"><span class="live-dot" style="width:6px;height:6px"></span> 3/3 Nodes</span>
               </div>
               <div class="deck-app">
                 <aside class="deck-side">
                   <div class="ds-brand"><img src="icon.svg" alt=""> Swag</div>
                   <button type="button" class="ds-nav on" data-deck-tab="chat"><span>主对话</span></button>
-                  <button type="button" class="ds-nav" data-deck-tab="inbox"><span>收件箱</span><span class="ds-badge" id="demo-inbox-badge">3</span></button>
+                  <button type="button" class="ds-nav" data-deck-tab="inbox"><span>收件箱</span><span class="ds-badge" id="demo-inbox-badge">2</span></button>
                   <button type="button" class="ds-nav" data-deck-tab="todos"><span>待办中心</span><span class="ds-badge blue" id="demo-todo-badge">2</span></button>
                   <button type="button" class="ds-nav" data-deck-tab="pool"><span>模型池 / 配额</span></button>
 
@@ -91,23 +92,23 @@
                   <div class="dm-head">
                     <div>
                       <div class="dm-title" id="dm-title">和 Swag 对话</div>
-                      <div class="dm-sub" id="dm-sub">Router 在线 · 3/3 节点已连接</div>
+                      <div class="dm-sub" id="dm-sub">Router 在线 · 桌面与手机端实时同步</div>
                     </div>
                     <span class="ds-tag">可点击交互体验</span>
                   </div>
 
                   <!-- Chat View -->
                   <div class="dm-view on" data-deck-view="chat">
-                    <div class="bubble user">把 release-check 派到 gpu-node-1 跑全量回归，通过后等我确认再推 tag。</div>
+                    <div class="bubble user">把 release-check 派到 gpu-node-1 跑全量回归，通过后发卡片等我确认。</div>
                     <div class="bubble agent">
                       <div class="bubble-meta">Swag Router · 刚刚</div>
-                      已在 <code>gpu-node-1</code>（<code>codex · tier-standard</code>）跑完 <code>go test -race ./...</code>（42/42 通过，0 警告）。准备推送 <code>v0.7.1</code> 并滚动更新节点，是否批准？
+                      已在 <code>gpu-node-1</code>（<code>codex · tier-standard</code>）跑完 <code>go test -race ./...</code>（42/42 通过）。准备推送 <code>v0.7.3</code> 并滚动更新节点，是否批准？
                       <div class="opt-row">
-                        <button type="button" class="opt-btn primary" data-demo-approve>批准发布 v0.7.1</button>
-                        <button type="button" class="opt-btn" data-demo-approve>仅构建不发布</button>
+                        <button type="button" class="opt-btn primary" data-demo-approve="批准发布 v0.7.3">批准发布 v0.7.3</button>
+                        <button type="button" class="opt-btn" data-demo-approve="仅构建不发布">仅构建不发布</button>
                       </div>
                     </div>
-                    <div class="bubble user" id="demo-chat-confirm" hidden>✅ 已确认：批准发布 v0.7.1（来自飞书原位回调 / 主对话同步）</div>
+                    <div class="bubble user" id="demo-chat-confirm" hidden>✅ 已确认：批准发布 v0.7.3</div>
                   </div>
 
                   <!-- Inbox View -->
@@ -115,8 +116,8 @@
                     <div class="item-card">
                       <div class="item-av feishu">飞</div>
                       <div class="item-body">
-                        <div class="item-top"><span>feishu-todo 每日汇总</span><span class="dm-sub">18:30</span></div>
-                        <div class="item-desc">发现 2 条未关闭任务与 1 场明日架构评审日程，已去重，待确认是否转入待办或派活。</div>
+                        <div class="item-top"><span>feishu-todo 上下文汇总</span><span class="dm-sub">18:30</span></div>
+                        <div class="item-desc">强模型综合 IM、日程、审批与任务后提炼出 2 条需你跟进的行动项，已去重。</div>
                         <div class="item-foot">
                           <button type="button" class="mini-btn" data-demo-ack="promote">+ 转为待办</button>
                           <button type="button" class="mini-btn" data-demo-ack="seen">标为已看</button>
@@ -126,20 +127,10 @@
                     <div class="item-card">
                       <div class="item-av agent">助</div>
                       <div class="item-body">
-                        <div class="item-top"><span>worker release-check 汇报</span><span class="dm-sub">18:42</span></div>
-                        <div class="item-desc">所有并发单测与静态检查已通过，产物就绪，等待确认是否打 tag。</div>
+                        <div class="item-top"><span>worker release-check 阻塞确认</span><span class="dm-sub">18:42</span></div>
+                        <div class="item-desc">全量回归已绿，待主人审批发布或补充自定义指令。</div>
                         <div class="item-foot">
                           <button type="button" class="mini-btn" data-demo-ack="promote">+ 转为待办</button>
-                          <button type="button" class="mini-btn" data-demo-ack="seen">标为已看</button>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="item-card">
-                      <div class="item-av task">定</div>
-                      <div class="item-body">
-                        <div class="item-top"><span>夜间巡检 · ops-auditor</span><span class="dm-sub">02:00</span></div>
-                        <div class="item-desc">集群磁盘与服务健康巡检正常，Dream 已完成记忆归档并镜像到 3 台节点。</div>
-                        <div class="item-foot">
                           <button type="button" class="mini-btn" data-demo-ack="seen">标为已看</button>
                         </div>
                       </div>
@@ -151,15 +142,15 @@
                     <div class="item-card">
                       <div class="item-av agent">审</div>
                       <div class="item-body">
-                        <div class="item-top"><span>待审批 · 发布 v0.7.1</span><span class="dm-sub">高优先</span></div>
-                        <div class="item-desc">全量测试已绿，待点击确认后自动推送并重启节点。</div>
+                        <div class="item-top"><span>待审批 · 发布 v0.7.3</span><span class="dm-sub">高优先</span></div>
+                        <div class="item-desc">支持在待办卡片内直接点击审批或派给 Swag 继续执行。</div>
                       </div>
                     </div>
                     <div class="item-card">
-                      <div class="item-av task">任</div>
+                      <div class="item-av feishu">飞</div>
                       <div class="item-body">
-                        <div class="item-top"><span>复查本周发布检查项</span><span class="dm-sub">飞书待办</span></div>
-                        <div class="item-desc">通过 <code>swag todo add --source feishu</code> 自动同步入列，支持一键派给 Swag 跟进。</div>
+                        <div class="item-top"><span>确认明日架构评审材料</span><span class="dm-sub">飞书待办</span></div>
+                        <div class="item-desc">由 <code>feishu-analyst</code> 结合上下文提炼并通过 <code>swag todo add --source feishu</code> 自动入列。</div>
                       </div>
                     </div>
                   </div>
@@ -170,7 +161,7 @@
                       <div class="p-card">
                         <div class="p-top"><span>Codex Pro</span><span class="p-ok">可用</span></div>
                         <div class="meter-track"><div class="meter-fill" style="width:92%"></div></div>
-                        <div class="p-foot">5h 剩余 92% · 2 节点去重</div>
+                        <div class="p-foot">5h 剩余 92% · 跨机去重</div>
                       </div>
                       <div class="p-card">
                         <div class="p-top"><span>Claude Max</span><span class="p-ok">可用</span></div>
@@ -185,8 +176,8 @@
                     </div>
                     <div class="item-card">
                       <div class="item-body">
-                        <div class="item-top"><span>模型档位故障切换链</span><span class="dm-sub">限流自动冷却 · 订阅兜底</span></div>
-                        <div class="item-desc"><code>tier-fast</code> / <code>tier-standard</code> / <code>tier-strong</code> 自动路由并在上游 429/5xx 时无感切换，全通道不可用时可回落至本机原生 CLI 订阅。</div>
+                        <div class="item-top"><span>分级路由与订阅兜底</span><span class="dm-sub">自动冷却 · 零中断</span></div>
+                        <div class="item-desc"><code>tier-fast</code> / <code>tier-standard</code> / <code>tier-strong</code> 遇 429/5xx 自动切换通道，全池不可用时自动兜底到本机原生 CLI 订阅。</div>
                       </div>
                     </div>
                   </div>
@@ -194,17 +185,68 @@
               </div>
             </div>
 
-            <!-- Floating Feishu Interactive Card Demo -->
-            <div class="lark-float" id="lark-float" aria-label="Interactive Feishu Card Preview">
-              <div class="lf-head">
-                <span>Swag · 待你确认</span>
-                <span style="font-size:11px;opacity:.9">飞书卡片</span>
-              </div>
-              <div class="lf-body">
-                <b>release-check 已通过</b><br>
-                42/42 单测绿灯，点击下方按钮通过 WebSocket 原位审批（不跳浏览器）：
-                <button type="button" class="lf-btn" data-demo-approve>批准发布 v0.7.1</button>
-                <div class="lf-done">✅ 已确认：「批准发布 v0.7.1」· 卡片原地更新</div>
+            <!-- Floating iPhone 16 Pro Frame: Feishu Card 2.0 + Mobile PWA -->
+            <div class="phone-frame" aria-label="Mobile PWA & Feishu Interactive Card Preview">
+              <div class="phone-screen">
+                <div class="phone-status">
+                  <span>21:30</span>
+                  <div class="phone-island"></div>
+                  <span>5G · 96%</span>
+                </div>
+                <div class="phone-switch">
+                  <button type="button" class="on" data-phone-tab="lark">飞书卡片</button>
+                  <button type="button" data-phone-tab="pwa">手机 PWA</button>
+                </div>
+                <div class="phone-body">
+                  <!-- Pane 1: Feishu Card 2.0 with Options + Custom Input -->
+                  <div class="phone-pane on" data-phone-pane="lark">
+                    <div class="lark-card" id="lark-card">
+                      <div class="lc-head">
+                        <span>Swag · 待你确认</span>
+                        <span style="font-size:10.5px;opacity:.9">Card 2.0</span>
+                      </div>
+                      <div class="lc-body">
+                        <b>release-check 已通过</b><br>
+                        42/42 单测绿灯，点击按钮或直接输入自定义回复（不跳浏览器）：
+                        <button type="button" class="lc-btn" data-demo-approve="批准发布 v0.7.3">批准发布 v0.7.3</button>
+                        <form class="lc-form" id="demo-lark-form">
+                          <input class="lc-input" id="demo-lark-input" placeholder="其他：直接输入回复 Swag 的话…" autocomplete="off">
+                          <button type="submit" class="lc-sub">发送自定义回复</button>
+                        </form>
+                        <div class="lc-done" id="demo-lark-done">✅ 已确认：「批准发布 v0.7.3」· 卡片原地更新</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Pane 2: Mobile PWA -->
+                  <div class="phone-pane" data-phone-pane="pwa">
+                    <div class="pwa-mini">
+                      <div class="pwa-pill">
+                        <div><b>Swag Mobile PWA</b><div style="font-size:10.5px;color:var(--ink-3)">单手审批 · 终端实时流</div></div>
+                        <span class="bp-badge">在线</span>
+                      </div>
+                      <div class="pwa-pill">
+                        <span>gpu-node-1 · release-check</span>
+                        <span class="bp-badge">运行中</span>
+                      </div>
+                      <div class="pwa-pill">
+                        <span>收件箱 / 待办</span>
+                        <span class="bp-badge warn">实时 SSE</span>
+                      </div>
+                      <div class="pwa-qr">
+                        <svg viewBox="0 0 36 36" fill="#141518" aria-hidden="true">
+                          <rect x="2" y="2" width="10" height="10" rx="1.5"/><rect x="4.5" y="4.5" width="5" height="5" fill="#fff"/><rect x="6" y="6" width="2" height="2"/>
+                          <rect x="24" y="2" width="10" height="10" rx="1.5"/><rect x="26.5" y="4.5" width="5" height="5" fill="#fff"/><rect x="28" y="6" width="2" height="2"/>
+                          <rect x="2" y="24" width="10" height="10" rx="1.5"/><rect x="4.5" y="26.5" width="5" height="5" fill="#fff"/><rect x="6" y="28" width="2" height="2"/>
+                          <rect x="15" y="4" width="3" height="3"/><rect x="15" y="10" width="6" height="3"/><rect x="15" y="16" width="4" height="4"/>
+                          <rect x="22" y="16" width="4" height="3"/><rect x="29" y="16" width="5" height="4"/><rect x="15" y="24" width="5" height="3"/>
+                          <rect x="23" y="23" width="4" height="4"/><rect x="30" y="25" width="4" height="9"/><rect x="17" y="30" width="9" height="4"/>
+                        </svg>
+                        <div><b>扫码即连手机</b><br>运行 <code>swag pair</code> 生成一次性配对码，添加到主屏幕即原生 App 体验。</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -212,45 +254,189 @@
       </section>
     </div>
 
-    <!-- Architecture -->
+    <!-- Mobile & Anywhere Bento Section -->
+    <section class="band" id="mobile">
+      <div class="wrap">
+        <div class="reveal">
+          <div class="sec-kicker" data-i18n="mob.kicker">随时随地 · 移动端与 ChatOps</div>
+          <h2 class="sec-h" data-i18n="mob.h">离开工位，依然单手掌控每一台机器上的 Agent。</h2>
+          <p class="sec-p" data-i18n="mob.p">电脑继续留在桌上跑编译、训练与回归；手机扫码装好 PWA 或打开飞书聊天窗，审批、插话、看终端全都不需要回工位。</p>
+        </div>
+
+        <div class="bento-grid reveal">
+          <div class="bento wide">
+            <div>
+              <div class="bento-tag">Mobile PWA · iOS &amp; Android</div>
+              <h3 data-i18n="b1.t">扫码配对手机 PWA，单手审批与实时终端流</h3>
+              <p data-i18n="b1.p">在 Hub 运行 <code>swag pair</code> 生成 10 分钟一次性二维码，手机扫码即可登录并免密保持 1 年会话。支持添加到主屏幕全屏运行、断网重连 SSE、移动端触控优化及查看任意远程节点的实时终端输出。</p>
+            </div>
+            <div class="bento-preview">
+              <div class="bp-row"><span><b>swag pair</b> · 一次性二维码扫码登录</span><span class="bp-badge">零 App Store 依赖</span></div>
+              <div class="bp-row"><span><b>外置浏览器深链</b> · 复用登录态不掉线</span><span class="bp-badge">iOS / Android</span></div>
+              <div class="bp-row"><span><b>跨机实时终端</b> · 手机直接查看并打断 Worker</span><span class="bp-badge">herdr + SSE</span></div>
+            </div>
+          </div>
+
+          <div class="bento narrow">
+            <div>
+              <div class="bento-tag">Feishu / Lark · Card 2.0</div>
+              <h3 data-i18n="b2.t">飞书卡片原位审批 + 自定义 Prompt 输入框</h3>
+              <p data-i18n="b2.p">不只有预设快捷按钮，每张需要确认的卡片下方都自带输入框——像 Codex 的 Other 一样直接在飞书里打字回复 Swag，WebSocket 回调原地把卡片翻绿，全程不跳浏览器。</p>
+            </div>
+            <div class="bento-preview">
+              <div class="bp-row"><span>快捷选项按钮</span><span class="bp-badge">一键原位确认</span></div>
+              <div class="bp-row"><span>自定义文本表单</span><span class="bp-badge">直接回传 Prompt</span></div>
+              <div class="bp-row"><span>推送方式</span><span class="bp-badge warn">WS 长连接 · 零公网</span></div>
+            </div>
+          </div>
+
+          <div class="bento narrow">
+            <div>
+              <div class="bento-tag">Context-Aware Todo Engine</div>
+              <h3 data-i18n="b3.t">强模型上下文提炼，自动沉淀「飞书待办」</h3>
+              <p data-i18n="b3.p">定时只读扫描任务、日程、审批与 @我未读消息，结合历史记忆与进行中任务去重，用强模型精准筛选出真正需要你处理的事并写入待办中心。</p>
+            </div>
+            <div class="bento-preview">
+              <div class="bp-row"><span>只读扫描红线</span><span class="bp-badge">绝不代发/代批</span></div>
+              <div class="bp-row"><span>写入命令</span><span class="bp-badge">swag todo add</span></div>
+            </div>
+          </div>
+
+          <div class="bento wide">
+            <div>
+              <div class="bento-tag">Private &amp; Local-First</div>
+              <h3 data-i18n="b4.t">全链路自托管，数据与密钥永不离开你的机器</h3>
+              <p data-i18n="b4.p">没有第三方云中转、没有订阅绑架。SQLite WAL 对话库、Markdown 长期记忆与 <code>0600</code> 权限的凭证文件全部存在你自己的 <code>~/.swag/</code> 目录，配合尾网 / 内网安全直连。</p>
+            </div>
+            <div class="bento-preview">
+              <div class="bp-row"><span>状态持久化</span><span class="bp-badge">~/.swag/swag.db (SQLite WAL)</span></div>
+              <div class="bp-row"><span>凭证隔离</span><span class="bp-badge">profiles.json &amp; pool.json (0600)</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HTMLBox Interactive Architecture Topology -->
     <section class="band" id="arch">
       <div class="wrap">
-        <div class="sec-kicker" data-i18n="arch.kicker">架构设计</div>
-        <h2 class="sec-h" data-i18n="arch.h">节点零入站端口，Hub 持有唯一权威状态。</h2>
-        <p class="sec-p" data-i18n="arch.p">Mac 笔记本与远程开发机主动出站连回 Hub；SQLite WAL 对话历史、长期记忆、收件箱投影与模型反代池集中在 Hub，Agent 则原地运行在你的代码与环境旁边。</p>
+        <div class="reveal">
+          <div class="sec-kicker" data-i18n="arch.kicker">HTMLBox 交互式架构拓扑</div>
+          <h2 class="sec-h" data-i18n="arch.h">节点零入站端口，Hub 持有唯一权威状态。</h2>
+          <p class="sec-p" data-i18n="arch.p">点击或悬停下方任意架构模块，查看通信协议与数据流向。你的笔记本和算力机只需主动出站连回 Hub，即可组成跨机 Super Agent 舰队。</p>
+        </div>
 
-        <div class="arch-box">
-          <div class="arch-grid">
-            <div class="arch-col">
-              <div class="arch-node">
-                <h4><span>Web UI &amp; Mobile PWA</span><span class="ds-tag">SSE</span></h4>
-                <p>零构建内嵌前端，电脑本地 <code>127.0.0.1:17788</code> 或手机扫码直连。</p>
+        <div class="htmlbox-canvas reveal">
+          <div class="hb-topbar">
+            <div class="hb-legend">
+              <span><i class="hb-dot" style="background:var(--accent)"></i>控制面 / 审批流</span>
+              <span><i class="hb-dot" style="background:var(--blue)"></i>移动端 / 飞书长连接</span>
+              <span><i class="hb-dot" style="background:var(--ok)"></i>出站 yamux 隧道</span>
+            </div>
+            <span class="hb-hint">点击模块查看协议细节 · Live Topology</span>
+          </div>
+
+          <div class="hb-stage">
+            <!-- Left: Surfaces -->
+            <div class="hb-col">
+              <div class="hb-col-title">01 · Control Surfaces</div>
+              <div class="hbox" data-hb="web">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico">⌘</span>Desktop Web UI</span>
+                  <span class="hbox-proto">HTTP / SSE</span>
+                </div>
+                <p>零构建内嵌前端，Mac 本地代理 <code>127.0.0.1:17788</code>。</p>
+                <div class="hbox-chips"><span>主对话</span><span>收件箱</span><span>待办</span><span>模型池</span></div>
               </div>
-              <div class="arch-node">
-                <h4><span>Feishu / Lark Bot</span><span class="ds-tag">WS</span></h4>
-                <p>阻塞与审批实时推送卡片，<code>card.action.trigger</code> 原位变绿回写。</p>
+
+              <div class="hbox" data-hb="mobile">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico">📱</span>Mobile PWA</span>
+                  <span class="hbox-proto">QR Pair</span>
+                </div>
+                <p>iOS / Android 扫码即连，单手审批卡片与实时终端流。</p>
+                <div class="hbox-chips"><span>1-Year Cookie</span><span>Offline Reconnect</span></div>
+              </div>
+
+              <div class="hbox" data-hb="lark">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico">⚡</span>Feishu / Lark Bot</span>
+                  <span class="hbox-proto">WS Card 2.0</span>
+                </div>
+                <p>选项按钮 + 自定义 Prompt 表单，原位变绿回写。</p>
+                <div class="hbox-chips"><span>card.action.trigger</span><span>零跳转</span></div>
               </div>
             </div>
 
-            <div class="arch-arrow">HTTP / SSE<br>⇄</div>
-
-            <div class="arch-node hub">
-              <h4><span>Swag Hub</span><span class="ds-tag">SQLite WAL</span></h4>
-              <p>唯一权威状态库 · Router/Worker 调度 · 服务端统一收件箱/待办投影 · <code>/v1</code> 多通道模型反代池 · 长期记忆与夜间 Dream。</p>
+            <!-- Bridge Left -->
+            <div class="hb-bridge" aria-hidden="true">
+              <svg viewBox="0 0 72 220">
+                <path class="flow-path" d="M 0 36 C 36 36, 36 110, 72 110"/>
+                <path class="flow-pulse" d="M 0 36 C 36 36, 36 110, 72 110"/>
+                <path class="flow-path" d="M 0 110 L 72 110"/>
+                <path class="flow-pulse blue" d="M 0 110 L 72 110"/>
+                <path class="flow-path" d="M 0 184 C 36 184, 36 110, 72 110"/>
+                <path class="flow-pulse blue" d="M 0 184 C 36 184, 36 110, 72 110"/>
+              </svg>
+              <span class="hb-bridge-label">SSE · WS</span>
             </div>
 
-            <div class="arch-arrow">Outbound<br>yamux ⇄</div>
-
-            <div class="arch-col">
-              <div class="arch-node">
-                <h4><span>Compute Nodes</span><span class="ds-tag">Linux</span></h4>
-                <p>24h 常驻构建、测试、巡检与定时任务，无需暴露公网入站端口。</p>
-              </div>
-              <div class="arch-node">
-                <h4><span>Personal Laptop</span><span class="ds-tag">macOS</span></h4>
-                <p>本地 IDE 终端、桌面端会话接管与只读记忆镜像同步。</p>
+            <!-- Center: Swag Hub -->
+            <div class="hb-col">
+              <div class="hb-col-title">02 · Authoritative Control Plane</div>
+              <div class="hbox hub active" data-hb="hub">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico" style="background:var(--ink);color:var(--paper);border:0">S</span>Swag Hub (Single Go Binary)</span>
+                  <span class="hbox-proto" style="color:var(--ok);border-color:var(--ok)">:7788</span>
+                </div>
+                <p>唯一权威状态、跨机调度中枢与 OpenAI 兼容模型网关。</p>
+                <div class="hub-grid">
+                  <div class="hub-mod"><b>SQLite WAL Store</b><small>对话、事件、定时器与归档</small></div>
+                  <div class="hub-mod"><b>Inbox &amp; Todo 投影</b><small>服务端唯一计数 · 零漂移</small></div>
+                  <div class="hub-mod"><b>/v1 模型反代池</b><small>三级故障切换 + 订阅兜底</small></div>
+                  <div class="hub-mod"><b>Memory &amp; Dream</b><small>夜间复盘 + 跨机只读镜像</small></div>
+                  <div class="hub-mod wide"><b>Router &amp; Fleet Scheduler</b><small>按机器组 / 角色模板 / 凭证档位精准派发与断线续跑</small></div>
+                </div>
               </div>
             </div>
+
+            <!-- Bridge Right -->
+            <div class="hb-bridge" aria-hidden="true">
+              <svg viewBox="0 0 72 220">
+                <path class="flow-path" d="M 72 62 C 36 62, 36 110, 0 110"/>
+                <path class="flow-pulse ok" d="M 72 62 C 36 62, 36 110, 0 110"/>
+                <path class="flow-path" d="M 72 158 C 36 158, 36 110, 0 110"/>
+                <path class="flow-pulse ok" d="M 72 158 C 36 158, 36 110, 0 110"/>
+              </svg>
+              <span class="hb-bridge-label">yamux ⇄</span>
+            </div>
+
+            <!-- Right: Execution Nodes -->
+            <div class="hb-col">
+              <div class="hb-col-title">03 · Outbound Worker Nodes</div>
+              <div class="hbox" data-hb="compute">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico">▣</span>Compute / GPU Node</span>
+                  <span class="hbox-proto">Linux · runit</span>
+                </div>
+                <p>24h 常驻训练、构建、定时巡检与飞书上下文 Todo 分析。</p>
+                <div class="hbox-chips"><span>herdr</span><span>Codex</span><span>Claude</span><span>lark-cli</span></div>
+              </div>
+
+              <div class="hbox" data-hb="laptop">
+                <div class="hbox-head">
+                  <span class="hbox-title"><span class="hbox-ico"></span>Personal MacBook</span>
+                  <span class="hbox-proto">macOS · launchd</span>
+                </div>
+                <p>本地 IDE 终端接管、桌面端对话同步与记忆只读镜像。</p>
+                <div class="hbox-chips"><span>Antigravity</span><span>Local UI</span><span>Memory Mirror</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hb-inspector" id="hb-inspector">
+            <div><strong id="hb-ins-title">Swag Hub (Single Go Binary)</strong> — <span id="hb-ins-desc">单二进制承载控制面 API、嵌入式 Web UI、SQLite WAL、多通道 /v1 模型反代与 yamux 节点接入，无需额外数据库或 Node 运行时。</span></div>
+            <code id="hb-ins-cmd">swag --port 7788</code>
           </div>
         </div>
       </div>
@@ -259,11 +445,13 @@
     <!-- Core Capabilities -->
     <section class="band" id="features">
       <div class="wrap">
-        <div class="sec-kicker" data-i18n="feat.kicker">核心能力</div>
-        <h2 class="sec-h" data-i18n="feat.h">面向真实多机研发日常，而非玩具 Demo。</h2>
-        <p class="sec-p" data-i18n="feat.p">Go 单二进制内嵌零构建原生前端，每个核心模块都有清晰边界与自动化架构守卫测试。</p>
+        <div class="reveal">
+          <div class="sec-kicker" data-i18n="feat.kicker">核心能力</div>
+          <h2 class="sec-h" data-i18n="feat.h">面向真实多机研发日常，而非玩具 Demo。</h2>
+          <p class="sec-p" data-i18n="feat.p">Go 单二进制内嵌零构建原生前端，每个核心模块都有清晰边界与自动化架构守卫测试。</p>
+        </div>
 
-        <div class="feat-list">
+        <div class="feat-list reveal">
           <article class="feat-row">
             <div class="feat-num">01</div>
             <div>
@@ -271,7 +459,7 @@
               <p class="feat-sub" data-i18n="f1.s">按机器分组或角色模板派发 Claude Code / Codex / Antigravity 任务，支持 0600 独立凭证注入、断线无缝续跑与终端直连。</p>
             </div>
             <div class="feat-detail">
-              <code>swag spawn --group compute --role ops-auditor "检查夜间回归测试结果并汇报异常"</code>
+              <code>swag spawn --group compute --role feishu-analyst "结合上下文提炼今日待办并写入飞书待办"</code>
               <div class="feat-tags"><span>Machine Groups</span><span>Role Profiles</span><span>0600 profiles.json</span><span>Session Resume</span></div>
             </div>
           </article>
@@ -283,7 +471,7 @@
               <p class="feat-sub" data-i18n="f2.s">收件箱负责外部事件分诊，待办中心沉淀明确行动项。Hub 统一投影未读角标，侧栏、Tab 与列表计数严格一致，支持一键转待办与 swag todo CLI。</p>
             </div>
             <div class="feat-detail">
-              <code>swag todo add --source feishu --title "确认本周发布排期" --due "今天 18:00"</code>
+              <code>swag todo add --source feishu --priority high --title "确认本周发布排期" --due "今天 18:00"</code>
               <div class="feat-tags"><span>Server Projections</span><span>Inbox → Todo</span><span>SSE Live Sync</span><span>CLI &amp; Modal</span></div>
             </div>
           </article>
@@ -304,11 +492,11 @@
             <div class="feat-num">04</div>
             <div>
               <h3 class="feat-title" data-i18n="f4.t">长期记忆、夜间做梦与飞书原位审批</h3>
-              <p class="feat-sub" data-i18n="f4.s">夜间 Dream 自动整理记忆并同步只读镜像到各节点；阻塞或审批卡片支持通过飞书 card.action.trigger 长连接原地变绿确认，不再跳转浏览器。</p>
+              <p class="feat-sub" data-i18n="f4.s">夜间 Dream 自动整理记忆并同步只读镜像到各节点；审批卡片通过飞书 card.action.trigger 支持一键确认与自定义 Prompt 表单回复，原地变绿回写。</p>
             </div>
             <div class="feat-detail">
               <code>swag reply --opt "批准上线" --opt "暂缓" "压测指标达标，是否继续灰度发布？"</code>
-              <div class="feat-tags"><span>Nightly Dream</span><span>Memory Mirror</span><span>card.action.trigger</span><span>In-Place Update</span></div>
+              <div class="feat-tags"><span>Nightly Dream</span><span>Memory Mirror</span><span>Custom Input Form</span><span>In-Place Update</span></div>
             </div>
           </article>
         </div>
@@ -318,15 +506,17 @@
     <!-- Quick Start -->
     <section class="band" id="start">
       <div class="wrap">
-        <div class="sec-kicker" data-i18n="qs.kicker">快速开始</div>
-        <h2 class="sec-h" data-i18n="qs.h">单个 Go 二进制，零前端打包依赖。</h2>
-        <p class="sec-p" data-i18n="qs.p">Go 1.24+ 直接编译，扫码配对手机 PWA 或一键接入新电脑节点，所有状态与密钥留在你自己的 ~/.swag/ 目录。</p>
+        <div class="reveal">
+          <div class="sec-kicker" data-i18n="qs.kicker">快速开始</div>
+          <h2 class="sec-h" data-i18n="qs.h">单个 Go 二进制，零前端打包依赖。</h2>
+          <p class="sec-p" data-i18n="qs.p">Go 1.24+ 直接编译，扫码配对手机 PWA 或一键接入新电脑节点，所有状态与密钥留在你自己的 ~/.swag/ 目录。</p>
+        </div>
 
-        <div class="qs-shell">
+        <div class="qs-shell reveal">
           <div class="qs-tabs">
             <div class="qs-tab-btns">
               <button type="button" class="qs-tab on" data-qs-tab="build">1. 编译并启动 Hub</button>
-              <button type="button" class="qs-tab" data-qs-tab="pair">2. 配对节点与手机</button>
+              <button type="button" class="qs-tab" data-qs-tab="pair">2. 配对手机 PWA 与节点</button>
               <button type="button" class="qs-tab" data-qs-tab="cli">3. 常用 CLI</button>
             </div>
             <button type="button" class="pill-btn" id="qs-copy" data-i18n="qs.copy">复制命令</button>
@@ -338,19 +528,19 @@ cd swag &amp;&amp; ./scripts/verify.sh
 <span class="c"># 编译单二进制并启动 Hub</span>
 CGO_ENABLED=0 go build -trimpath -o ~/.local/bin/swag .
 swag</pre>
-          <pre class="qs-pre" data-qs-pre="pair"><span class="c"># 在 Hub 上生成手机 PWA 配对二维码（10 分钟有效）</span>
+          <pre class="qs-pre" data-qs-pre="pair"><span class="c"># 在 Hub 上生成手机 PWA 配对二维码（10 分钟有效，扫码添加到主屏幕）</span>
 swag pair
 
-<span class="c"># 生成另一台电脑（Mac / Linux 算力节点）加入命令</span>
+<span class="c"># 生成另一台电脑（Mac / Linux 算力节点）出站加入命令</span>
 swag pair --computer
 
-<span class="c"># 在新节点上运行配对命令后，即可通过本机 http://127.0.0.1:17788 访问</span></pre>
+<span class="c"># 新节点接入后，本机直接打开 http://127.0.0.1:17788</span></pre>
           <pre class="qs-pre" data-qs-pre="cli"><span class="c"># 查看在线节点、Router 与运行中的 Worker</span>
 swag list
 
 <span class="c"># 定时任务与待办中心</span>
-swag timer add "weekdays 09:00" "汇总昨夜构建状态与今日重点"
-swag todo add --title "复查发布检查项" --due "今天 18:00"
+swag timer add "weekdays 10:00" --role feishu-analyst "整理飞书待办并同步到待办中心"
+swag todo add --source feishu --priority high --title "复查发布检查项" --due "今天 18:00"
 swag todo ls</pre>
         </div>
       </div>
