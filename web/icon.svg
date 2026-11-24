@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <!-- Pure monochrome matte obsidian backdrop (Codex minimalist aesthetic) -->
+    <linearGradient id="bg" x1="256" y1="16" x2="256" y2="496" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#141416"/>
+      <stop offset="55%" stop-color="#0A0A0B"/>
+      <stop offset="100%" stop-color="#050506"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="256" y1="16" x2="256" y2="496" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <!-- Upper S-blade: pure crisp white -->
+    <linearGradient id="upper" x1="145" y1="115" x2="365" y2="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F2F2F3"/>
+    </linearGradient>
+
+    <!-- Lower S-blade: neutral monochrome silver-zinc for crisp figure separation -->
+    <linearGradient id="lower" x1="150" y1="265" x2="375" y2="405" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#D4D4D8"/>
+      <stop offset="100%" stop-color="#9A9AA0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Apple-style squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
+  <rect x="18" y="18" width="476" height="476" rx="114" stroke="url(#rim)" stroke-width="4"/>
+
+  <!-- Precision-cut 180° symmetric interlocking geometric S-emblem -->
+  <g transform="rotate(-8 256 256)">
+    <!-- Upper arc-blade -->
+    <path d="M 342 126 L 222 126 A 50 50 0 0 0 222 226 L 306 226"
+          stroke="url(#upper)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Lower arc-blade (exact 180° rotational mirror) -->
+    <path d="M 170 386 L 290 386 A 50 50 0 0 0 290 286 L 206 286"
+          stroke="url(#lower)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

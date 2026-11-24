@@ -1,0 +1,425 @@
+package swag
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+func todoRandID() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return "td-" + hex.EncodeToString(b[:])
+}
+
+type TodoItem struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Detail    string    `json:"detail,omitempty"`
+	Source    string    `json:"source"` // feishu | manual | agent
+	Status    string    `json:"status"` // open | done
+	Priority  string    `json:"priority,omitempty"`
+	Link      string    `json:"link,omitempty"`
+	Due       string    `json:"due,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+var todoMu sync.Mutex
+
+func todosPath() string    { return filepath.Join(swagDir(), "todos.json") }
+func inboxAckPath() string { return filepath.Join(swagDir(), "inbox-ack.json") }
+
+func loadTodos() []TodoItem {
+	todoMu.Lock()
+	defer todoMu.Unlock()
+	b, err := os.ReadFile(todosPath())
+	if err != nil {
+		return []TodoItem{}
+	}
+	var list []TodoItem
+	if json.Unmarshal(b, &list) != nil || list == nil {
+		return []TodoItem{}
+	}
+	return list
+}
+
+func saveTodos(list []TodoItem) error {
+	todoMu.Lock()
+	defer todoMu.Unlock()
+	if err := os.MkdirAll(swagDir(), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := todosPath() + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, todosPath())
+}
+
+func loadInboxAck() map[string]bool {
+	todoMu.Lock()
+	defer todoMu.Unlock()
+	out := map[string]bool{}
+	b, err := os.ReadFile(inboxAckPath())
+	if err != nil {
+		return out
+	}
+	var ids []string
+	if json.Unmarshal(b, &ids) == nil {
+		for _, id := range ids {
+			if id != "" {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+func saveInboxAck(m map[string]bool) error {
+	todoMu.Lock()
+	defer todoMu.Unlock()
+	if err := os.MkdirAll(swagDir(), 0o700); err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(m))
+	for k, v := range m {
+		if v {
+			ids = append(ids, k)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) > 500 {
+		ids = ids[len(ids)-500:]
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	tmp := inboxAckPath() + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, inboxAckPath())
+}
+
+func isFeishuTrigger(t *Trigger) bool {
+	if t == nil {
+		return false
+	}
+	fromLow := strings.ToLower(t.From)
+	low := strings.ToLower(t.Text)
+	return strings.Contains(fromLow, "feishu") || strings.Contains(t.Text, "【工作日飞书只读 Todo") || strings.Contains(low, "feishu-todo")
+}
+
+func isBlockedTriggerText(low string) bool {
+	return strings.Contains(low, "is blocked") || strings.Contains(low, "blocked:") || strings.Contains(low, "block:")
+}
+
+func isFailedTriggerText(low string) bool {
+	return strings.Contains(low, "failed to start") || strings.Contains(low, "marked failed") || (strings.Contains(low, "worker ") && strings.Contains(low, "failed:"))
+}
+
+// inboxNeedReasonsLocked returns triggerID -> reason for inbox items that still
+// need the human's attention. Both the sidebar/tab badge and Inbox "需要你"
+// list use this single server-side projection so counts never drift.
+func (sp *Super) inboxNeedReasonsLocked(now time.Time) map[string]string {
+	acked := loadInboxAck()
+	ts := sp.st.Triggers
+	if len(ts) > 120 {
+		ts = ts[len(ts)-120:]
+	}
+	activeWorkers := map[string]*Worker{}
+	for _, wk := range sp.st.Workers {
+		if !wk.Ended {
+			activeWorkers[wk.Name] = wk
+		}
+	}
+	latestFeishu := map[string]string{}
+	for _, t := range ts {
+		if isFeishuTrigger(t) && t.Source == "worker" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.Text)), "report from ") {
+			k := t.From
+			if k == "" {
+				k = "feishu"
+			}
+			latestFeishu[k] = t.ID
+		}
+	}
+	out := map[string]string{}
+	for _, t := range ts {
+		if acked[t.ID] {
+			continue
+		}
+		low := strings.ToLower(t.Text)
+		w := activeWorkers[t.From]
+		switch {
+		case t.Status == "queued" && sp.st.Settings.Paused:
+			out[t.ID] = "自动化已暂停，排队等待处理"
+		case t.Action == "candidate":
+			out[t.ID] = "外部事件，等你决定"
+		case w != nil && w.Status == "blocked" && isBlockedTriggerText(low):
+			out[t.ID] = "当前阻塞中，需去终端确认"
+		case w != nil && isFailedTriggerText(low):
+			out[t.ID] = "运行异常，需查看"
+		case isFeishuTrigger(t) && t.Source == "worker" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.Text)), "report from "):
+			k := t.From
+			if k == "" {
+				k = "feishu"
+			}
+			if latestFeishu[k] == t.ID && now.Sub(t.At) < 12*time.Hour {
+				out[t.ID] = "飞书待办汇总，待确认是否派活"
+			}
+		}
+	}
+	return out
+}
+
+func (sp *Super) todoOpenCountLocked(now time.Time) int {
+	n := len(sp.pendingLocked(now))
+	for _, t := range loadTodos() {
+		if t.Status != "done" {
+			n++
+		}
+	}
+	if entries, err := os.ReadDir(filepath.Join(sp.memDir(), "tasks")); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func (sp *Super) broadcastSubs() {
+	if sp == nil {
+		return
+	}
+	sp.mu.Lock()
+	for ch := range sp.subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	sp.mu.Unlock()
+}
+
+func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
+	sp := s.sup
+	sp.PullRemoteRouterMemory(r.Context(), false)
+	todos := loadTodos()
+	sort.Slice(todos, func(i, j int) bool {
+		if todos[i].Status != todos[j].Status {
+			return todos[i].Status == "open"
+		}
+		return todos[i].UpdatedAt.After(todos[j].UpdatedAt)
+	})
+	type liveTask struct {
+		Name    string    `json:"name"`
+		Title   string    `json:"title"`
+		Summary string    `json:"summary"`
+		Mod     time.Time `json:"mod"`
+	}
+	var tasks []liveTask
+	for _, f := range sp.memFiles() {
+		if !strings.HasPrefix(f.Name, "tasks/") || strings.HasPrefix(f.Name, "tasks/done/") {
+			continue
+		}
+		title := strings.TrimSuffix(strings.TrimPrefix(f.Name, "tasks/"), ".md")
+		summary := ""
+		for _, line := range strings.Split(f.Text, "\n") {
+			t := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#>-*• "))
+			if t == "" {
+				continue
+			}
+			if summary == "" && strings.HasPrefix(strings.TrimSpace(line), "#") {
+				title = clip(t, 60)
+				continue
+			}
+			summary = clip(t, 140)
+			break
+		}
+		tasks = append(tasks, liveTask{Name: f.Name, Title: title, Summary: summary, Mod: f.Mod})
+	}
+	type pendingView struct {
+		ID      string    `json:"id"`
+		At      time.Time `json:"at"`
+		Summary string    `json:"summary"`
+		Text    string    `json:"text"`
+		Options []string  `json:"options,omitempty"`
+		Check   bool      `json:"check,omitempty"`
+	}
+	sp.mu.Lock()
+	rawPend := sp.pendingLocked(time.Now())
+	entryText := map[string]string{}
+	for _, e := range sp.st.Entries {
+		entryText[e.ID] = e.Text
+	}
+	sp.mu.Unlock()
+	pending := make([]pendingView, 0, len(rawPend))
+	for _, p := range rawPend {
+		full := entryText[p.ID]
+		if full == "" {
+			full = p.Summary
+		}
+		pending = append(pending, pendingView{
+			ID: p.ID, At: p.At, Summary: p.Summary, Text: full, Options: p.Options, Check: p.Check,
+		})
+	}
+	openTodos := 0
+	for _, t := range todos {
+		if t.Status != "done" {
+			openTodos++
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"todos":      todos,
+		"live_tasks": tasks,
+		"pending":    pending,
+		"open_count": openTodos + len(tasks) + len(pending),
+	})
+}
+
+func (s *Server) superTodoUpsert(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Detail   string `json:"detail"`
+		Source   string `json:"source"`
+		Priority string `json:"priority"`
+		Link     string `json:"link"`
+		Due      string `json:"due"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		writeJSON(w, 400, map[string]any{"error": "待办标题不能为空"})
+		return
+	}
+	src := strings.TrimSpace(body.Source)
+	if src == "" {
+		src = "manual"
+	}
+	now := time.Now()
+	list := loadTodos()
+	for i := range list {
+		if (body.ID != "" && list[i].ID == body.ID) || (body.ID == "" && list[i].Status == "open" && list[i].Source == src && list[i].Title == title) {
+			list[i].Title = title
+			if strings.TrimSpace(body.Detail) != "" {
+				list[i].Detail = strings.TrimSpace(body.Detail)
+			}
+			list[i].Source = src
+			if strings.TrimSpace(body.Priority) != "" {
+				list[i].Priority = strings.TrimSpace(body.Priority)
+			}
+			if strings.TrimSpace(body.Link) != "" {
+				list[i].Link = strings.TrimSpace(body.Link)
+			}
+			if strings.TrimSpace(body.Due) != "" {
+				list[i].Due = strings.TrimSpace(body.Due)
+			}
+			list[i].UpdatedAt = now
+			_ = saveTodos(list)
+			s.sup.broadcastSubs()
+			writeJSON(w, 200, map[string]any{"ok": true, "todo": list[i]})
+			return
+		}
+	}
+	item := TodoItem{
+		ID:        todoRandID(),
+		Title:     title,
+		Detail:    strings.TrimSpace(body.Detail),
+		Source:    src,
+		Status:    "open",
+		Priority:  strings.TrimSpace(body.Priority),
+		Link:      strings.TrimSpace(body.Link),
+		Due:       strings.TrimSpace(body.Due),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	list = append([]TodoItem{item}, list...)
+	if err := saveTodos(list); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	s.sup.broadcastSubs()
+	writeJSON(w, 200, map[string]any{"ok": true, "todo": item})
+}
+
+func (s *Server) superTodoAction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Status string `json:"status"`
+		Delete bool   `json:"delete"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	list := loadTodos()
+	var next []TodoItem
+	found := false
+	for _, t := range list {
+		if t.ID != id {
+			next = append(next, t)
+			continue
+		}
+		found = true
+		if body.Delete {
+			continue
+		}
+		if body.Status == "done" || body.Status == "open" {
+			t.Status = body.Status
+		} else if t.Status == "done" {
+			t.Status = "open"
+		} else {
+			t.Status = "done"
+		}
+		t.UpdatedAt = time.Now()
+		next = append(next, t)
+	}
+	if !found {
+		writeJSON(w, 404, map[string]any{"error": "未找到该待办"})
+		return
+	}
+	if err := saveTodos(next); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	s.sup.broadcastSubs()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) superInboxAck(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	ack := loadInboxAck()
+	for _, id := range body.IDs {
+		if id = strings.TrimSpace(id); id != "" {
+			ack[id] = true
+		}
+	}
+	if err := saveInboxAck(ack); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	s.sup.broadcastSubs()
+	writeJSON(w, 200, map[string]any{"ok": true, "acked": len(ack)})
+}
