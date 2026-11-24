@@ -28,14 +28,17 @@
   const barColor = (rem) => (rem >= 50 ? "#22c55e" : rem >= 20 ? "#f59e0b" : "#ef4444");
 
   async function renderUsage(body, api, esc, toast, days = 7, fresh = false) {
+    const gen = body._autoGen;
     body.innerHTML = `<p class="panel-intro">正在聚合所有在线机器的 Token 使用数据…</p>`;
     let u;
     try {
       u = await api(`/api/super/usage?days=${days}${fresh ? "&fresh=1" : ""}`);
     } catch (err) {
+      if (body._autoGen !== gen) return;
       body.innerHTML = `<p class="panel-intro">读取用量失败：${esc(err.message)}</p>`;
       return;
     }
+    if (body._autoGen !== gen) return;
     const tot = u.total || {}, tod = u.today || {};
     const daily = u.daily || [];
     const maxDay = Math.max(1, ...daily.map((d) => d.total || 0));
@@ -84,14 +87,17 @@
   let poolQuery = "";
 
   async function renderPool(body, api, esc, toast, fresh = false) {
+    const gen = body._autoGen;
     body.innerHTML = `<p class="panel-intro">正在采集各机器原生订阅配额与模型池状态…</p>`;
     let data;
     try {
       data = await api(`/api/super/quota${fresh ? "?fresh=1" : ""}`);
     } catch (err) {
+      if (body._autoGen !== gen) return;
       body.innerHTML = `<p class="panel-intro">读取模型池失败：${esc(err.message)}</p>`;
       return;
     }
+    if (body._autoGen !== gen) return;
     const subs = data.subscriptions || [];
     const cfg = data.pool || { providers: [], tiers: [] };
     const provs = cfg.providers || [];
@@ -967,6 +973,7 @@
   }
 
   async function renderTodos(body, api, esc, toast, onDispatch) {
+    const gen = body._autoGen;
     if (!body.querySelector(".td-wrap")) {
       body.innerHTML = `<p class="panel-intro">正在加载待办、进行中任务与待审批事项…</p>`;
     }
@@ -974,9 +981,11 @@
     try {
       data = await api("/api/super/todos");
     } catch (err) {
+      if (body._autoGen !== gen) return;
       body.innerHTML = `<p class="panel-intro">读取待办失败：${esc(err.message)}</p>`;
       return;
     }
+    if (body._autoGen !== gen) return;
     let todos = data.todos || [];
     const liveTasks = data.live_tasks || [];
     const pending = data.pending || [];

@@ -1922,29 +1922,29 @@
   }
 
   async function loadAuto(restore = null) {
-    const body = $("#auto-body");
+    const body = $("#auto-body"), tab = autoTab, gen = (body._autoGen = (body._autoGen || 0) + 1);
+    const stale = () => view !== "auto" || autoTab !== tab || body._autoGen !== gen;
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     const applyAfter = () => {
       if (restore) restoreSimpleScroll(body, restore);
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
     try {
-      if (autoTab === "inbox" || autoTab === "threads") {
+      if (tab === "inbox" || tab === "threads") {
         const r = await api("/api/super/triggers");
-        if (view !== "auto") return;
-        if (autoTab === "inbox" && window.SwagPanels?.renderInbox) {
+        if (stale()) return;
+        if (tab === "inbox" && window.SwagPanels?.renderInbox) {
           window.SwagPanels.renderInbox(body, r.triggers || [], r.acked || {}, r.active_workers || {}, api, esc, toast, () => loadAuto(), r.need_reasons || null, (txt, re) => { location.hash = "#/swag"; sendSuper(txt, re); });
         } else {
           body.innerHTML = threadsHTML(r.threads || []);
         }
         applyAfter();
-      } else if (autoTab === "todos" && window.SwagPanels?.renderTodos) {
+      } else if (tab === "todos" && window.SwagPanels?.renderTodos) {
         await window.SwagPanels.renderTodos(body, api, esc, toast, (txt, re) => { location.hash = "#/swag"; sendSuper(txt, re); });
-        applyAfter();
-        return;
-      } else if (autoTab === "memory") {
+        if (!stale()) applyAfter();
+      } else if (tab === "memory") {
         const r = await api("/api/super/memory");
-        if (view !== "auto" || autoTab !== "memory" || memEditing) return;
+        if (stale() || memEditing) return;
         // Workers' states count too: the task cards show them.
         const sig = JSON.stringify(r) + sup.workers.map((w) => w.name + ":" + workerStatus(w)).join();
         if (sig !== body._memSig) {
@@ -1957,31 +1957,30 @@
           restoreSimpleScroll(body, restore);
         }
         return;
-      } else if (autoTab === "usage" && window.SwagPanels) {
+      } else if (tab === "usage" && window.SwagPanels) {
         await window.SwagPanels.renderUsage(body, api, esc, toast);
-        applyAfter();
-        return;
-      } else if (autoTab === "pool" && window.SwagPanels) {
+        if (!stale()) applyAfter();
+      } else if (tab === "pool" && window.SwagPanels) {
         await window.SwagPanels.renderPool(body, api, esc, toast);
-        applyAfter();
-        return;
-      } else if (autoTab === "timers") {
+        if (!stale()) applyAfter();
+      } else if (tab === "timers") {
         const r = await api("/api/super/timers");
-        if (view !== "auto" || autoTab !== "timers") return;
+        if (stale()) return;
         const endedOpen = !!body.querySelector("details[data-ended-timers][open]");
         body.innerHTML = timersHTML(r.timers || []);
         if (endedOpen) { const d = body.querySelector("details[data-ended-timers]"); if (d) d.open = true; }
         applyAfter();
       } else {
         const r = await api("/api/super/settings");
-        body.innerHTML = autoTab === "hooks" ? hooksHTML(r) : settingsHTML(r);
+        if (stale()) return;
+        body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
         applyAfter();
-        if (autoTab !== "hooks") api("/api/super/lark?fresh").then((l) => {
+        if (tab !== "hooks") api("/api/super/lark?fresh").then((l) => {
           const el = $("#lark-who");
           if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`;
         }).catch(() => {});
       }
-    } catch (err) { body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
+    } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
   }
 
   // ───────────────────────────── memory: what Swag keeps between sessions
