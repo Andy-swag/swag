@@ -21,16 +21,32 @@ func todoRandID() string {
 }
 
 type TodoItem struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Detail    string    `json:"detail,omitempty"`
-	Source    string    `json:"source"` // feishu | manual | agent
-	Status    string    `json:"status"` // open | done
-	Priority  string    `json:"priority,omitempty"`
-	Link      string    `json:"link,omitempty"`
-	Due       string    `json:"due,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Detail       string    `json:"detail,omitempty"`
+	Source       string    `json:"source"` // feishu | manual | agent
+	Status       string    `json:"status"` // open | dispatched | done
+	Priority     string    `json:"priority,omitempty"`
+	Link         string    `json:"link,omitempty"`
+	Due          string    `json:"due,omitempty"`
+	DispatchedAt time.Time `json:"dispatched_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func todoIsOpen(status string) bool {
+	return status == "" || status == "open"
+}
+
+func todoStatusRank(status string) int {
+	switch status {
+	case "", "open":
+		return 0
+	case "dispatched":
+		return 1
+	default:
+		return 2
+	}
 }
 
 var todoMu sync.Mutex
@@ -189,7 +205,7 @@ func (sp *Super) inboxNeedReasonsLocked(now time.Time) map[string]string {
 func (sp *Super) todoOpenCountLocked(now time.Time) int {
 	n := len(sp.pendingLocked(now))
 	for _, t := range loadTodos() {
-		if t.Status != "done" {
+		if todoIsOpen(t.Status) {
 			n++
 		}
 	}
@@ -222,8 +238,9 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 	sp.PullRemoteRouterMemory(r.Context(), false)
 	todos := loadTodos()
 	sort.Slice(todos, func(i, j int) bool {
-		if todos[i].Status != todos[j].Status {
-			return todos[i].Status == "open"
+		ri, rj := todoStatusRank(todos[i].Status), todoStatusRank(todos[j].Status)
+		if ri != rj {
+			return ri < rj
 		}
 		return todos[i].UpdatedAt.After(todos[j].UpdatedAt)
 	})
@@ -281,7 +298,7 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 	}
 	openTodos := 0
 	for _, t := range todos {
-		if t.Status != "done" {
+		if todoIsOpen(t.Status) {
 			openTodos++
 		}
 	}
@@ -299,6 +316,7 @@ func (s *Server) superTodoUpsert(w http.ResponseWriter, r *http.Request) {
 		Title    string `json:"title"`
 		Detail   string `json:"detail"`
 		Source   string `json:"source"`
+		Status   string `json:"status"`
 		Priority string `json:"priority"`
 		Link     string `json:"link"`
 		Due      string `json:"due"`
@@ -315,15 +333,25 @@ func (s *Server) superTodoUpsert(w http.ResponseWriter, r *http.Request) {
 	if src == "" {
 		src = "manual"
 	}
+	wantStatus := strings.TrimSpace(body.Status)
+	if wantStatus != "open" && wantStatus != "dispatched" && wantStatus != "done" {
+		wantStatus = "open"
+	}
 	now := time.Now()
 	list := loadTodos()
 	for i := range list {
-		if (body.ID != "" && list[i].ID == body.ID) || (body.ID == "" && list[i].Status == "open" && list[i].Source == src && list[i].Title == title) {
+		if (body.ID != "" && list[i].ID == body.ID) || (body.ID == "" && list[i].Status != "done" && list[i].Source == src && list[i].Title == title) {
 			list[i].Title = title
 			if strings.TrimSpace(body.Detail) != "" {
 				list[i].Detail = strings.TrimSpace(body.Detail)
 			}
 			list[i].Source = src
+			if strings.TrimSpace(body.Status) != "" {
+				list[i].Status = wantStatus
+				if wantStatus == "dispatched" {
+					list[i].DispatchedAt = now
+				}
+			}
 			if strings.TrimSpace(body.Priority) != "" {
 				list[i].Priority = strings.TrimSpace(body.Priority)
 			}
@@ -345,12 +373,15 @@ func (s *Server) superTodoUpsert(w http.ResponseWriter, r *http.Request) {
 		Title:     title,
 		Detail:    strings.TrimSpace(body.Detail),
 		Source:    src,
-		Status:    "open",
+		Status:    wantStatus,
 		Priority:  strings.TrimSpace(body.Priority),
 		Link:      strings.TrimSpace(body.Link),
 		Due:       strings.TrimSpace(body.Due),
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	if wantStatus == "dispatched" {
+		item.DispatchedAt = now
 	}
 	list = append([]TodoItem{item}, list...)
 	if err := saveTodos(list); err != nil {
@@ -372,7 +403,7 @@ func upsertTodoInternal(title, detail, source, priority, link, due string) {
 	now := time.Now()
 	list := loadTodos()
 	for i := range list {
-		if list[i].Status == "open" && list[i].Source == source && list[i].Title == title {
+		if list[i].Status != "done" && list[i].Source == source && list[i].Title == title {
 			if strings.TrimSpace(detail) != "" {
 				list[i].Detail = strings.TrimSpace(detail)
 			}
@@ -458,14 +489,18 @@ func (s *Server) superTodoAction(w http.ResponseWriter, r *http.Request) {
 		if body.Delete {
 			continue
 		}
-		if body.Status == "done" || body.Status == "open" {
+		if body.Status == "done" || body.Status == "open" || body.Status == "dispatched" {
 			t.Status = body.Status
 		} else if t.Status == "done" {
 			t.Status = "open"
 		} else {
 			t.Status = "done"
 		}
-		t.UpdatedAt = time.Now()
+		now := time.Now()
+		if t.Status == "dispatched" {
+			t.DispatchedAt = now
+		}
+		t.UpdatedAt = now
 		next = append(next, t)
 	}
 	if !found {
@@ -504,7 +539,7 @@ func (s *Server) superInboxAck(w http.ResponseWriter, r *http.Request) {
 func (s *Server) superTodoBatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs    []string `json:"ids"`
-		Action string   `json:"action"` // done | open | delete
+		Action string   `json:"action"` // done | open | dispatched | delete
 	}
 	if !decode(w, r, &body) {
 		return
@@ -519,7 +554,7 @@ func (s *Server) superTodoBatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "未选择待办"})
 		return
 	}
-	if body.Action != "done" && body.Action != "open" && body.Action != "delete" {
+	if body.Action != "done" && body.Action != "open" && body.Action != "dispatched" && body.Action != "delete" {
 		writeJSON(w, 400, map[string]any{"error": "不支持的批量操作"})
 		return
 	}
@@ -537,6 +572,9 @@ func (s *Server) superTodoBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		t.Status = body.Action
+		if body.Action == "dispatched" {
+			t.DispatchedAt = now
+		}
 		t.UpdatedAt = now
 		next = append(next, t)
 	}

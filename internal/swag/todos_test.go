@@ -219,3 +219,52 @@ func TestNodeRouterMemDirPrefersDreamWork(t *testing.T) {
 		t.Fatalf("expected dream-work/memory when present, got %s", got)
 	}
 }
+
+func TestTodoDispatchedLifecycleAndNoDoubleCount(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{dir: tmp, st: &State{}, subs: map[chan struct{}]bool{}}
+	s := &Server{sup: sp}
+
+	_ = saveTodos([]TodoItem{
+		{ID: "td-1", Title: "固化脚本/流水线：预检", Source: "agent", Status: "open"},
+		{ID: "td-2", Title: "改进 Skill：mipp", Source: "agent", Status: "open"},
+	})
+	if got := sp.todoOpenCountLocked(time.Now()); got != 2 {
+		t.Fatalf("expected 2 open initially, got %d", got)
+	}
+
+	// Dispatch td-1: leaves open count, sets DispatchedAt, and no longer double-counts with live task.
+	req := httptest.NewRequest("POST", "/api/super/todos/batch", bytes.NewReader([]byte(`{"ids":["td-1"],"action":"dispatched"}`)))
+	rec := httptest.NewRecorder()
+	s.superTodoBatch(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("batch dispatched failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := sp.todoOpenCountLocked(time.Now()); got != 1 {
+		t.Fatalf("expected 1 open after dispatching td-1, got %d", got)
+	}
+	list := loadTodos()
+	if list[0].Status != "dispatched" || list[0].DispatchedAt.IsZero() {
+		t.Fatalf("expected td-1 dispatched with timestamp, got %+v", list[0])
+	}
+
+	// Upserting same proposal title again must not create a duplicate open todo while dispatched.
+	upsertTodoInternal("固化脚本/流水线：预检", "updated note", "agent", "medium", "", "")
+	if got := loadTodos(); len(got) != 2 || got[0].Status != "dispatched" {
+		t.Fatalf("expected dispatched todo to stay deduplicated, got %+v", got)
+	}
+
+	// Swag finishing closes it via POST /api/super/todos/{id} status=done.
+	reqDone := httptest.NewRequest("POST", "/api/super/todos/td-1", bytes.NewReader([]byte(`{"status":"done"}`)))
+	reqDone.SetPathValue("id", "td-1")
+	recDone := httptest.NewRecorder()
+	s.superTodoAction(recDone, reqDone)
+	if recDone.Code != 200 {
+		t.Fatalf("todo done failed: %d %s", recDone.Code, recDone.Body.String())
+	}
+	if got := loadTodos()[0].Status; got != "done" {
+		t.Fatalf("expected td-1 done, got %q", got)
+	}
+}

@@ -437,6 +437,8 @@ func cliTodo(args []string) error {
 			mark := "[ ]"
 			if t.Status == "done" {
 				mark = "[x]"
+			} else if t.Status == "dispatched" {
+				mark = "[~]"
 			}
 			fmt.Printf("%s %s (%s) %s\n", mark, t.ID, orStr(t.Source, "manual"), t.Title)
 		}
@@ -464,7 +466,7 @@ func cliTodo(args []string) error {
 			printResult(b)
 		}
 		return err
-	case "done", "open", "rm", "del":
+	case "done", "open", "dispatched", "rm", "del":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: swag todo %s ID", args[0])
 		}
@@ -594,7 +596,8 @@ tidies memory/. Its journal is in dreams/.
 - ` + "`{{BIN}} timer add \"every 2h|daily 09:00|weekdays 09:00|weekly mon,thu 09:00|in 30m|at 2026-11-18 09:00\" \"text\" [--to WORKER]`" + `
   schedules a future event (follow-ups, recurring checks); ` + "`timer ls`" + `, ` + "`timer rm ID`" + `.
 - ` + "`{{BIN}} todo add --title \"...\" [--source feishu|agent|manual] [--priority high|medium|low] [--due \"...\"] [--link URL] [--detail \"...\"]`" + `
-  records a structured item in the human's Todo center (` + "`todo ls`" + `, ` + "`todo done ID`" + `, ` + "`todo rm ID`" + `).
+  records a structured item in the human's Todo center (` + "`todo ls`" + `, ` + "`todo done ID`" + `, ` + "`todo open ID`" + `, ` + "`todo rm ID`" + `).
+  When a message from the human includes ` + "`[todo:td-xxxx]`" + ` (dispatched from the Todo list), note that ID in ` + "`memory/tasks/<slug>.md`" + ` if you open a task, and run ` + "`{{BIN}} todo done td-xxxx`" + ` once the work is finished or confirmed no longer needed.
 - To read a worker's terminal: ` + "`herdr agent read WORKER --source recent-unwrapped --lines 80`" + `.
 
 ## Events

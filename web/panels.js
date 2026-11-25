@@ -765,6 +765,7 @@
         due: bg.querySelector("[data-tf=due]").value.trim(),
         link: bg.querySelector("[data-tf=link]").value.trim(),
         detail: bg.querySelector("[data-tf=detail]").value.trim(),
+        status: andDispatch ? "dispatched" : "open",
       };
       const doAck = ackId && bg.querySelector("[data-tf=ack]")?.checked;
       const saveBtn = bg.querySelector("#tm-save");
@@ -772,13 +773,15 @@
       if (saveBtn) saveBtn.disabled = true;
       if (goBtn) goBtn.disabled = true;
       try {
-        await api("/api/super/todos", { body: payload });
+        const saved = await api("/api/super/todos", { body: payload });
+        const todoId = saved?.todo?.id || "";
         if (doAck) await api("/api/super/inbox/ack", { body: { ids: [ackId] } });
         close();
         toast(andDispatch ? "已创建待办并派给 Swag" : "已添加到「待办」");
         if (opts.onSaved) opts.onSaved({ ackedId: doAck ? ackId : "" });
         if (andDispatch && opts.onDispatch) {
-          opts.onDispatch(`帮我处理这条待办：「${payload.title}」${payload.detail ? "\n补充信息：" + payload.detail : ""}${payload.link ? "\n链接：" + payload.link : ""}`);
+          const idTag = todoId ? `[todo:${todoId}] ` : "";
+          opts.onDispatch(`帮我处理这条待办：\n${idTag}「${payload.title}」${payload.detail ? "\n补充信息：" + payload.detail : ""}${payload.link ? "\n链接：" + payload.link : ""}`);
         }
       } catch (err) {
         toast(err.message, "attn");
@@ -1006,13 +1009,14 @@
       const promptTxt = (ta?.value || "").trim();
       const bodyBlocks = list.map((t, i) => {
         const prefix = list.length > 1 ? `${i + 1}. ` : "";
-        return `${prefix}「${t.title}」${t.detail ? "\n   补充：" + t.detail : ""}${t.link ? "\n   链接：" + t.link : ""}`;
+        const idTag = t.id ? `[todo:${t.id}] ` : "";
+        return `${prefix}${idTag}「${t.title}」${t.detail ? "\n   补充：" + t.detail : ""}${t.link ? "\n   链接：" + t.link : ""}`;
       }).join("\n");
       const msg = promptTxt
         ? `${promptTxt}\n\n关联待办：\n${bodyBlocks}`
         : `帮我处理以下待办：\n${bodyBlocks}`;
       close();
-      onDispatch(msg);
+      onDispatch(msg, list);
     };
 
     bg.addEventListener("click", (ev) => {
@@ -1067,7 +1071,7 @@
     const pending = data.pending || [];
 
     const syncTodoBadge = () => {
-      const openTodos = todos.filter((t) => t.status !== "done").length;
+      const openTodos = todos.filter((t) => !t.status || t.status === "open").length;
       const total = openTodos + liveTasks.length + pending.length;
       const badge = document.querySelector("#todo-badge");
       if (badge) {
@@ -1097,15 +1101,18 @@
 
       const q = todoQuery.trim().toLowerCase();
       const matchQ = (s) => !q || String(s || "").toLowerCase().includes(q);
-      const showPend = todoFilter !== "done" && (todoSrc === "all" || todoSrc === "pending")
+      const showLiveBand = todoFilter === "open" || todoFilter === "all";
+      const showPend = showLiveBand && (todoSrc === "all" || todoSrc === "pending")
         ? pending.filter((p) => matchQ((p.summary || "") + " " + (p.text || "") + " " + (p.options || []).join(" ")))
         : [];
-      const showTasks = todoFilter !== "done" && (todoSrc === "all" || todoSrc === "task")
+      const showTasks = showLiveBand && (todoSrc === "all" || todoSrc === "task")
         ? liveTasks.filter((t) => matchQ(t.title + " " + t.summary + " " + t.name))
         : [];
       const showTodos = todos.filter((t) => {
-        if (todoFilter === "open" && t.status === "done") return false;
-        if (todoFilter === "done" && t.status !== "done") return false;
+        const st = t.status || "open";
+        if (todoFilter === "open" && st !== "open") return false;
+        if (todoFilter === "dispatched" && st !== "dispatched") return false;
+        if (todoFilter === "done" && st !== "done") return false;
         if (todoSrc !== "all" && t.source !== todoSrc) return false;
         return matchQ(t.title + " " + (t.detail || "") + " " + (t.source || ""));
       });
@@ -1155,26 +1162,34 @@
       const todoById = new Map(todos.map((t) => [t.id, t]));
       const todoHTML = showTodos.map((t) => {
         const done = t.status === "done";
+        const dispatched = t.status === "dispatched";
         const sel = todoBatchMode && todoSelected.has(t.id);
         const srcLab = t.source === "feishu" ? "飞书" : t.source === "agent" ? "助手" : "手动";
         const priTag = t.priority === "high"
           ? `<span class="pi-tag pi-pri-high">高优先</span>`
           : t.priority === "low" ? `<span class="pi-tag pi-pri-low">低</span>` : "";
-        return `<div class="pi-card todo-card ${done ? "is-done" : ""} ${sel ? "is-sel" : ""}" data-td-id="${esc(t.id)}">
+        const statusDot = done ? "pi-dot-done" : dispatched ? "pi-dot-run" : "pi-dot-need";
+        const statusLab = done
+          ? "已完成"
+          : dispatched
+            ? `已派给 Swag${t.dispatched_at ? " · " + fmtClock(t.dispatched_at) : ""}`
+            : "待处理";
+        return `<div class="pi-card todo-card ${done ? "is-done" : dispatched ? "is-dispatched" : ""} ${sel ? "is-sel" : ""}" data-td-id="${esc(t.id)}">
           ${todoBatchMode
             ? `<input type="checkbox" class="td-sel-chk" data-td-sel="${esc(t.id)}" ${sel ? "checked" : ""}>`
             : `<button type="button" class="todo-chk ${done ? "td-chk-done" : ""}" data-td-toggle="${esc(t.id)}" title="${done ? "标为未完成" : "标为已完成"}">${done ? "✓" : ""}</button>`}
           <div class="pi-body">
             <div class="pi-top">
-              <div class="pi-title">${esc(t.title)}<span class="pi-tag">${esc(srcLab)}</span>${priTag}${t.due ? `<span class="pi-tag">${esc(t.due)}</span>` : ""}</div>
+              <div class="pi-title">${esc(t.title)}<span class="pi-tag">${esc(srcLab)}</span>${dispatched ? `<span class="pi-tag td-tag-run">已派发</span>` : ""}${priTag}${t.due ? `<span class="pi-tag">${esc(t.due)}</span>` : ""}</div>
               <span class="pi-time">${esc(fmtClock(t.updated_at || t.created_at))}</span>
             </div>
             ${t.detail ? `<div class="pi-snippet">${esc(t.detail)}</div>` : ""}
             <div class="pi-foot">
-              <span class="pi-status"><span class="pi-dot ${done ? "pi-dot-done" : "pi-dot-need"}"></span>${done ? "已完成" : "待处理"}</span>
+              <span class="pi-status"><span class="pi-dot ${statusDot}"></span>${esc(statusLab)}</span>
               <span class="grow"></span>
               ${t.link ? `<a class="btn ghost small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(t.link)}" target="_blank" rel="noopener">原链接</a>` : ""}
-              ${!done && !todoBatchMode ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-dispatch="${esc(t.id)}">派给 Swag</button>` : ""}
+              ${!done && !dispatched && !todoBatchMode ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-dispatch="${esc(t.id)}">派给 Swag</button>` : ""}
+              ${dispatched && !todoBatchMode ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`汇报一下已派待办 [todo:${t.id}]「${t.title}」的最新进展和结果`)}">催问进展</button><button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-reopen="${esc(t.id)}">退回待处理</button>` : ""}
               ${!todoBatchMode ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-del="${esc(t.id)}">删除</button>` : ""}
             </div>
           </div>
@@ -1182,6 +1197,7 @@
       }).join("");
 
       const openTotal = syncTodoBadge();
+      const dispatchedTotal = todos.filter((t) => t.status === "dispatched").length;
       const doneTotal = todos.filter((t) => t.status === "done").length;
       const srcChips = [
         ["all", "全部"],
@@ -1199,8 +1215,8 @@
         <span class="muted">已选 <b>${selCount}</b> 项</span>
         <span class="grow"></span>
         <button type="button" class="btn small" data-td-batch="done" ${selCount ? "" : "disabled"}>✓ 批量完成</button>
-        ${todoFilter === "done" ? `<button type="button" class="btn small" data-td-batch="open" ${selCount ? "" : "disabled"}>↺ 批量恢复</button>` : ""}
-        <button type="button" class="btn small" id="td-batch-dispatch" ${selCount ? "" : "disabled"}>⚡ 批量派给 Swag</button>
+        ${todoFilter === "done" || todoFilter === "dispatched" ? `<button type="button" class="btn small" data-td-batch="open" ${selCount ? "" : "disabled"}>↺ 退回待处理</button>` : ""}
+        ${todoFilter !== "done" ? `<button type="button" class="btn small" id="td-batch-dispatch" ${selCount ? "" : "disabled"}>⚡ 批量派给 Swag</button>` : ""}
         <button type="button" class="btn small" style="color:#ef4444" data-td-batch="delete" ${selCount ? "" : "disabled"}>批量删除</button>
       </div>` : "";
 
@@ -1208,6 +1224,7 @@
         <div class="pi-bar">
           <div class="pi-tabs">
             <button type="button" class="pi-tab ${todoFilter === "open" ? "on" : ""}" data-tdf="open">待处理${openTotal ? `<span class="cnt">${openTotal}</span>` : ""}</button>
+            <button type="button" class="pi-tab ${todoFilter === "dispatched" ? "on" : ""}" data-tdf="dispatched">已派发${dispatchedTotal ? ` <span class="muted">${dispatchedTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "done" ? "on" : ""}" data-tdf="done">已完成${doneTotal ? ` <span class="muted">${doneTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "all" ? "on" : ""}" data-tdf="all">全部</button>
           </div>
@@ -1231,23 +1248,42 @@
         if (s) { s.focus(); if (prevPos != null) s.setSelectionRange(prevPos, prevPos); }
       }
 
-      const runBatch = async (ids, action) => {
+      const runBatch = async (ids, action, silent = false) => {
         if (!ids.length) return;
         const idSet = new Set(ids);
+        const nowISO = new Date().toISOString();
         if (action === "delete") {
           todos = todos.filter((t) => !idSet.has(t.id));
         } else {
-          todos = todos.map((t) => (idSet.has(t.id) ? { ...t, status: action, updated_at: new Date().toISOString() } : t));
+          todos = todos.map((t) => (idSet.has(t.id)
+            ? { ...t, status: action, ...(action === "dispatched" ? { dispatched_at: nowISO } : {}), updated_at: nowISO }
+            : t));
         }
         ids.forEach((id) => todoSelected.delete(id));
         paint();
         try {
           await api("/api/super/todos/batch", { body: { ids, action } });
-          toast(action === "delete" ? `已批量删除 ${ids.length} 条待办` : action === "done" ? `已批量完成 ${ids.length} 条待办` : `已恢复 ${ids.length} 条待办`);
+          if (!silent) {
+            toast(
+              action === "delete" ? `已批量删除 ${ids.length} 条待办`
+                : action === "done" ? `已批量完成 ${ids.length} 条待办`
+                : action === "dispatched" ? `已派给 Swag（${ids.length} 条移入「已派发」）`
+                : `已退回待处理（${ids.length} 条）`,
+            );
+          }
         } catch (err) {
           toast(err.message, "attn");
           silentReload();
         }
+      };
+
+      const dispatchTodos = (items, clearBatch = false) => {
+        openDispatchModal(items, esc, toast, async (msg, sentList) => {
+          if (clearBatch) { todoBatchMode = false; todoSelected.clear(); }
+          const ids = (sentList || items || []).map((t) => t.id).filter(Boolean);
+          if (ids.length) await runBatch(ids, "dispatched", true);
+          if (onDispatch) onDispatch(msg);
+        });
       };
 
       const wrap = body.querySelector(".td-wrap");
@@ -1301,13 +1337,22 @@
         }
         if (e.target.closest("#td-batch-dispatch")) {
           const items = [...todoSelected].map((id) => todoById.get(id)).filter(Boolean);
-          openDispatchModal(items, esc, toast, (msg) => { todoBatchMode = false; todoSelected.clear(); onDispatch(msg); });
+          dispatchTodos(items, true);
           return;
         }
         const disp = e.target.closest("[data-td-dispatch]");
         if (disp) {
           const item = todoById.get(disp.dataset.tdDispatch);
-          if (item) openDispatchModal([item], esc, toast, onDispatch);
+          if (item) dispatchTodos([item], false);
+          return;
+        }
+        const reopen = e.target.closest("[data-td-reopen]");
+        if (reopen) {
+          const id = reopen.dataset.tdReopen;
+          todos = todos.map((t) => (t.id === id ? { ...t, status: "open", updated_at: new Date().toISOString() } : t));
+          paint();
+          try { await api(`/api/super/todos/${encodeURIComponent(id)}`, { body: { status: "open" } }); toast("已退回待处理"); }
+          catch (err) { toast(err.message, "attn"); silentReload(); }
           return;
         }
         const exp = e.target.closest("[data-td-expand]");
