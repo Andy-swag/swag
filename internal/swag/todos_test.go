@@ -175,23 +175,23 @@ func TestDreamProposalsAutoCreateTodos(t *testing.T) {
 	n := addDreamProposalTodos(
 		"2026-11-25-1041",
 		"SQL 巡检",
-		"mipp（START 后立即通知）、harness（真卡预检）",
+		"deploy-flow（启动后立即通知）、harness（真卡预检）",
 		"单卡预检（scripts/bench.sh）",
 	)
 	if n != 4 {
 		t.Fatalf("expected 4 proposal todos, got %d", n)
 	}
 	// Running again deduplicates by source + title.
-	addDreamProposalTodos("2026-11-25-1041", "SQL 巡检", "mipp（START 后立即通知）", "")
+	addDreamProposalTodos("2026-11-25-1041", "SQL 巡检", "deploy-flow（启动后立即通知）", "")
 	got := loadTodos()
 	if len(got) != 4 {
 		t.Fatalf("expected 4 deduplicated todos, got %d: %+v", len(got), got)
 	}
 	wantTitles := map[string]bool{
-		"沉淀 Skill：SQL 巡检": true,
-		"改进 Skill：mipp":    true,
-		"改进 Skill：harness": true,
-		"固化脚本/流水线：单卡预检":    true,
+		"沉淀 Skill：SQL 巡检":       true,
+		"改进 Skill：deploy-flow":   true,
+		"改进 Skill：harness":       true,
+		"固化脚本/流水线：单卡预检":          true,
 	}
 	for _, it := range got {
 		if it.Source != "agent" || !wantTitles[it.Title] {
@@ -225,7 +225,7 @@ func TestTodoDispatchedLifecycleAndNoDoubleCount(t *testing.T) {
 
 	_ = saveTodos([]TodoItem{
 		{ID: "td-1", Title: "固化脚本/流水线：预检", Source: "agent", Status: "open"},
-		{ID: "td-2", Title: "改进 Skill：mipp", Source: "agent", Status: "open"},
+		{ID: "td-2", Title: "改进 Skill：deploy-flow", Source: "agent", Status: "open"},
 	})
 	if got := sp.todoOpenCountLocked(time.Now()); got != 2 {
 		t.Fatalf("expected 2 open initially, got %d", got)
@@ -434,8 +434,8 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 		dir: tmp,
 		st: &State{
 			Entries: []*Entry{
-				{ID: "e1", Role: "swag", At: time.Now(), Text: "已完成交付：[DINOv2 接入复盘](https://example.larkoffice.com/docx/DocABC123?from=chat) 与知识库 https://example.feishu.cn/wiki/WikiXYZ999"},
-				{ID: "e2", Role: "swag", At: time.Now().Add(time.Minute), Text: "复盘文档：https://example.larkoffice.com/docx/DocABC123"},
+				{ID: "e1", Role: "swag", At: time.Now(), Text: "已完成交付：[模型推理接入复盘](https://example.feishu.cn/docx/DocABC123?from=chat) 与知识库 https://example.feishu.cn/wiki/WikiXYZ999"},
+				{ID: "e2", Role: "swag", At: time.Now().Add(time.Minute), Text: "复盘文档：https://example.feishu.cn/docx/DocABC123"},
 			},
 		},
 	}
@@ -443,7 +443,7 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 	if err := os.MkdirAll(doneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(doneDir, "merlin.md"), []byte("# Merlin 单卡预检\n复盘文档：https://example.larkoffice.com/docx/DocMerlin777\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(doneDir, "bench.md"), []byte("# GPU 单卡预检\n复盘文档：https://example.feishu.cn/docx/DocBench777\n"), 0o600)
 
 	got := sp.collectDeliverables()
 	if len(got) != 3 {
@@ -453,13 +453,13 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 	for _, d := range got {
 		byURL[d.URL] = d
 	}
-	if d := byURL["https://example.larkoffice.com/docx/DocABC123"]; d.Title != "DINOv2 接入复盘" || d.DocType != "飞书文档" {
+	if d := byURL["https://example.feishu.cn/docx/DocABC123"]; d.Title != "模型推理接入复盘" || d.DocType != "飞书文档" {
 		t.Fatalf("unexpected docx item: %+v", d)
 	}
 	if d := byURL["https://example.feishu.cn/wiki/WikiXYZ999"]; d.DocType != "知识库" {
 		t.Fatalf("unexpected wiki item: %+v", d)
 	}
-	if d := byURL["https://example.larkoffice.com/docx/DocMerlin777"]; d.Source != "tasks/done/merlin.md" {
+	if d := byURL["https://example.feishu.cn/docx/DocBench777"]; d.Source != "tasks/done/bench.md" {
 		t.Fatalf("unexpected task done item: %+v", d)
 	}
 }

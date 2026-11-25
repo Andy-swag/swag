@@ -314,13 +314,13 @@ func TestPoolRuntimeStatsPersistAcrossRestart(t *testing.T) {
 	poolMu.Lock()
 	poolRuntimeDir = ""
 	poolRuntime = map[string]*ProviderRuntime{}
-	rt := runtimeFor("llmbox")
+	rt := runtimeFor("openai-primary")
 	rt.Requests = 3
 	rt.Successes = 3
 	savePoolRuntimeLocked()
 	poolMu.Unlock()
 
-	recordPoolUsageTokens("llmbox", []byte(`{"usage":{"input_tokens":1200,"output_tokens":345,"total_tokens":1545}}`))
+	recordPoolUsageTokens("openai-primary", []byte(`{"usage":{"input_tokens":1200,"output_tokens":345,"total_tokens":1545}}`))
 
 	// Simulate Hub process restart by wiping in-memory state.
 	poolMu.Lock()
@@ -329,9 +329,9 @@ func TestPoolRuntimeStatsPersistAcrossRestart(t *testing.T) {
 	poolMu.Unlock()
 
 	snap := poolStatsSnapshot()
-	got, ok := snap["llmbox"]
+	got, ok := snap["openai-primary"]
 	if !ok {
-		t.Fatalf("expected llmbox stats after restart, got %+v", snap)
+		t.Fatalf("expected openai-primary stats after restart, got %+v", snap)
 	}
 	if got.Requests != 3 || got.Successes != 3 || got.InputTokens != 1200 || got.OutputTokens != 345 || got.TotalTokens != 1545 {
 		t.Fatalf("unexpected persisted pool stats: %+v", got)

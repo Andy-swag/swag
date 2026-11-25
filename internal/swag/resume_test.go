@@ -75,8 +75,8 @@ func TestAgentStopLine(t *testing.T) {
 
 func TestDreamSkills(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "d.md")
-	os.WriteFile(p, []byte("归档了两个任务。\n可做成 skill：Dorado 只读查表、Spark 草稿读 HDFS。\n\n# 记录\n"), 0o600)
-	if got := dreamLine(p, dreamSkillsPrefix); got != "Dorado 只读查表、Spark 草稿读 HDFS" {
+	os.WriteFile(p, []byte("归档了两个任务。\n可做成 skill：SQL 只读查表、Spark 草稿读数据湖。\n\n# 记录\n"), 0o600)
+	if got := dreamLine(p, dreamSkillsPrefix); got != "SQL 只读查表、Spark 草稿读数据湖" {
 		t.Errorf("skills: %q", got)
 	}
 	if got := dreamSummary(p); got != "归档了两个任务。" {
