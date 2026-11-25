@@ -161,3 +161,28 @@ func (s *Server) superWorkersReap(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "reaped": reaped, "count": len(reaped)})
 }
+
+func (sp *Super) dupRecentUserSayLocked(text string, re *Quote) *Entry {
+	wantRe := ""
+	if re != nil {
+		wantRe = re.Entry
+	}
+	now := time.Now()
+	for i := len(sp.st.Entries) - 1; i >= 0; i-- {
+		e := sp.st.Entries[i]
+		if now.Sub(e.At) > 3*time.Second {
+			break
+		}
+		if e.Role != "user" {
+			continue
+		}
+		gotRe := ""
+		if e.Re != nil {
+			gotRe = e.Re.Entry
+		}
+		if e.Text == text && gotRe == wantRe {
+			return e
+		}
+	}
+	return nil
+}

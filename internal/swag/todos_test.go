@@ -405,3 +405,29 @@ func TestPoolLastProviderCooldownEnablesNativeFallback(t *testing.T) {
 		t.Fatalf("expected sole 429 provider to enter cooldown so native fallback can trigger")
 	}
 }
+
+func TestSuperSayDeduplicatesRapidDoubleSubmit(t *testing.T) {
+	sp := &Super{subs: map[chan struct{}]bool{}, st: &State{Threads: map[string]*Thread{}}}
+	s := &Server{sup: sp}
+
+	body := []byte(`{"text":"每周四晚上复盘本周所有工作"}`)
+	req1 := httptest.NewRequest("POST", "/api/super/say", bytes.NewReader(body))
+	rec1 := httptest.NewRecorder()
+	s.superSay(rec1, req1)
+	if rec1.Code != 200 {
+		t.Fatalf("first say failed: %d %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest("POST", "/api/super/say", bytes.NewReader(body))
+	rec2 := httptest.NewRecorder()
+	s.superSay(rec2, req2)
+	if rec2.Code != 200 {
+		t.Fatalf("second say failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+	if len(sp.st.Entries) != 1 || len(sp.st.Triggers) != 1 {
+		t.Fatalf("expected rapid double-submit deduplicated to 1 entry & 1 trigger, got entries=%d triggers=%d", len(sp.st.Entries), len(sp.st.Triggers))
+	}
+	if !strings.Contains(rec2.Body.String(), `"deduped":true`) {
+		t.Fatalf("expected deduped response on 2nd submit, got %s", rec2.Body.String())
+	}
+}

@@ -242,6 +242,7 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
 	sp.mu.Lock()
 	re := sp.deckQuoteLocked(body.Re)
+	if dup := sp.dupRecentUserSayLocked(body.Text, re); dup != nil { sp.mu.Unlock(); writeJSON(w, 200, map[string]any{"entry": dup.ID, "deduped": true}); return }
 	e := sp.addEntryReLocked("user", mainThread, body.Text, "", "", re)
 	// The composer's "派到" chip: a one-off choice the router should honour.
 	text := body.Text

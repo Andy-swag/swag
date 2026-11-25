@@ -5477,25 +5477,25 @@
   }
 
   function bindComposer(form, input, send, machine) {
+    let sending = false;
     if (machine) bindFiles(form, machine);
     input.addEventListener("input", () => grow(input));
     input.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
       const mod = e.metaKey || e.ctrlKey;
-      // "mod": Enter makes a new line and ⌘/Ctrl+Enter sends.
       if (prefs.sendKey() === "mod" ? mod : !mod) { e.preventDefault(); form.requestSubmit(); }
     });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const btn = $(".send", form);
-      btn.disabled = true;
+      if (sending) return;
+      const btn = $(".send", form), raw = input.value;
+      sending = true; btn.disabled = true;
       try {
-        const text = await withFiles(form, input.value);
-        await send(text);
+        const text = await withFiles(form, raw);
         input.value = ""; grow(input); form._clearFiles?.();
-      }
-      catch (err) { toast(err.message, "attn"); }
-      finally { btn.disabled = false; }
+        await send(text);
+      } catch (err) { if (!input.value && raw) { input.value = raw; grow(input); } toast(err.message, "attn"); }
+      finally { sending = false; btn.disabled = false; }
     });
   }
 
