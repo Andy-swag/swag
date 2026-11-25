@@ -171,3 +171,35 @@ func TestDreamFailureBackoffPreventsAlertStorm(t *testing.T) {
 		t.Fatalf("3rd failure should suppress alert and give up tonight, got suppress=%v giveUp=%v", sup3, give3)
 	}
 }
+
+func TestDreamProposalsAutoCreateTodos(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	n := addDreamProposalTodos(
+		"2026-11-25-1041",
+		"SQL 巡检",
+		"mipp（START 后立即通知）、harness（真卡预检）",
+		"单卡预检（scripts/bench.sh）",
+	)
+	if n != 4 {
+		t.Fatalf("expected 4 proposal todos, got %d", n)
+	}
+	// Running again deduplicates by source + title.
+	addDreamProposalTodos("2026-11-25-1041", "SQL 巡检", "mipp（START 后立即通知）", "")
+	got := loadTodos()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 deduplicated todos, got %d: %+v", len(got), got)
+	}
+	wantTitles := map[string]bool{
+		"沉淀 Skill：SQL 巡检": true,
+		"改进 Skill：mipp":    true,
+		"改进 Skill：harness": true,
+		"固化脚本/流水线：单卡预检":    true,
+	}
+	for _, it := range got {
+		if it.Source != "agent" || !wantTitles[it.Title] {
+			t.Fatalf("unexpected todo item: %+v", it)
+		}
+	}
+}

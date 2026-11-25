@@ -383,11 +383,13 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	if ok {
 		dreamRecordSuccess()
 		sp.setLastDream(time.Now())
-		journal := filepath.Join(sp.routerDir(), "dreams", journalName(d.at)+".md")
+		jName := journalName(d.at)
+		journal := filepath.Join(sp.routerDir(), "dreams", jName+".md")
 		summary = dreamSummary(journal)
 		skills = dreamLine(journal, dreamSkillsPrefix)
 		fixes = dreamLine(journal, dreamFixPrefix)
 		scripts = dreamLine(journal, dreamScriptsPrefix)
+		addDreamProposalTodos(jName, skills, fixes, scripts)
 	}
 	sp.mu.Lock()
 	sp.dream = nil

@@ -361,6 +361,82 @@ func (s *Server) superTodoUpsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "todo": item})
 }
 
+func upsertTodoInternal(title, detail, source, priority, link, due string) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+	if source == "" {
+		source = "agent"
+	}
+	now := time.Now()
+	list := loadTodos()
+	for i := range list {
+		if list[i].Status == "open" && list[i].Source == source && list[i].Title == title {
+			if strings.TrimSpace(detail) != "" {
+				list[i].Detail = strings.TrimSpace(detail)
+			}
+			if strings.TrimSpace(priority) != "" {
+				list[i].Priority = strings.TrimSpace(priority)
+			}
+			list[i].UpdatedAt = now
+			_ = saveTodos(list)
+			return
+		}
+	}
+	item := TodoItem{
+		ID:        todoRandID(),
+		Title:     title,
+		Detail:    strings.TrimSpace(detail),
+		Source:    source,
+		Status:    "open",
+		Priority:  strings.TrimSpace(priority),
+		Link:      strings.TrimSpace(link),
+		Due:       strings.TrimSpace(due),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_ = saveTodos(append([]TodoItem{item}, list...))
+}
+
+func splitDreamProposalItem(raw string) (name, note string) {
+	raw = strings.TrimSpace(raw)
+	if i := strings.Index(raw, "（"); i > 0 && strings.HasSuffix(raw, "）") {
+		return strings.TrimSpace(raw[:i]), strings.TrimSpace(strings.TrimSuffix(raw[i+len("（"):], "）"))
+	}
+	if i := strings.Index(raw, "("); i > 0 && strings.HasSuffix(raw, ")") {
+		return strings.TrimSpace(raw[:i]), strings.TrimSpace(strings.TrimSuffix(raw[i+1:], ")"))
+	}
+	return raw, ""
+}
+
+func addDreamProposalTodos(journalDate, skills, fixes, scripts string) int {
+	added := 0
+	emit := func(prefix, raw, fallbackDetail string) {
+		if strings.TrimSpace(raw) == "" {
+			return
+		}
+		for _, part := range strings.Split(raw, "、") {
+			name, note := splitDreamProposalItem(part)
+			if name == "" {
+				continue
+			}
+			detail := fallbackDetail
+			if note != "" {
+				detail = note + "（来自 " + journalDate + " Dream 提案）"
+			} else {
+				detail = fallbackDetail + "（来自 " + journalDate + " Dream 提案）"
+			}
+			upsertTodoInternal(prefix+name, detail, "agent", "medium", "", "")
+			added++
+		}
+	}
+	emit("沉淀 Skill：", skills, "高频流程已成熟，可点「派给 Swag」指定保存位置并封装为 Skill")
+	emit("改进 Skill：", fixes, "已有 Skill 在实战中存在需要修正的痛点")
+	emit("固化脚本/流水线：", scripts, "高频重复流程建议固化为可复用脚本或流水线")
+	return added
+}
+
 func (s *Server) superTodoAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {

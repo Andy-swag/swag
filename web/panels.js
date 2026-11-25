@@ -1188,6 +1188,7 @@
         ["pending", `待审批 (${pending.length})`],
         ["task", `进行中任务 (${liveTasks.length})`],
         ["feishu", "飞书待办"],
+        ["agent", "助手提案"],
         ["manual", "手动待办"],
       ];
       const visTodoIds = showTodos.map((t) => t.id);
