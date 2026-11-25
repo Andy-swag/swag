@@ -512,7 +512,7 @@
     // The next time Swag set itself to look again, under 自动化 where its
     // timers are: "明天 09:00 再看：复查 paper_df…".
     const f = sup.follow;
-    $("#nav-auto-sub").textContent = f?.next ? `${whenShort(f.next)} 再看：${f.next_text || ""}` : "收件箱 · 定时 · 接入";
+    $("#nav-auto-sub").textContent = f?.next ? `${whenShort(f.next)} 再看：${f.next_text || ""}` : "待办 · 收件箱 · 定时";
     $("#nav-auto-sub").title = f?.next ? `Swag 设的下一次跟进：${f.next_text || ""}（点开看进行中的任务）` : "";
     $("#nav-auto-sub").classList.toggle("follow", !!f?.next);
     $("#nav-swag-dot").className = "dot " + deckDot(r.status);
@@ -1889,7 +1889,7 @@
   }, () => targetNow().machine);
 
   // ───────────────────────────── automation view
-  let autoTab = store.get("autoTab", "inbox");
+  let autoTab = store.get("autoTab", "todos");
   let autoTimer;
   $("#auto-tabs").addEventListener("click", (e) => {
     const t = e.target.closest("button")?.dataset.tab;

@@ -163,16 +163,6 @@ func (sp *Super) inboxNeedReasonsLocked(now time.Time) map[string]string {
 			activeWorkers[wk.Name] = wk
 		}
 	}
-	latestFeishu := map[string]string{}
-	for _, t := range ts {
-		if isFeishuTrigger(t) && t.Source == "worker" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.Text)), "report from ") {
-			k := t.From
-			if k == "" {
-				k = "feishu"
-			}
-			latestFeishu[k] = t.ID
-		}
-	}
 	out := map[string]string{}
 	for _, t := range ts {
 		if acked[t.ID] {
@@ -189,14 +179,6 @@ func (sp *Super) inboxNeedReasonsLocked(now time.Time) map[string]string {
 			out[t.ID] = "当前阻塞中，需去终端确认"
 		case w != nil && isFailedTriggerText(low):
 			out[t.ID] = "运行异常，需查看"
-		case isFeishuTrigger(t) && t.Source == "worker" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.Text)), "report from "):
-			k := t.From
-			if k == "" {
-				k = "feishu"
-			}
-			if latestFeishu[k] == t.ID && now.Sub(t.At) < 12*time.Hour {
-				out[t.ID] = "飞书待办汇总，待确认是否派活"
-			}
 		}
 	}
 	return out
@@ -248,6 +230,7 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 		Name    string    `json:"name"`
 		Title   string    `json:"title"`
 		Summary string    `json:"summary"`
+		Text    string    `json:"text,omitempty"`
 		Mod     time.Time `json:"mod"`
 	}
 	var tasks []liveTask
@@ -269,7 +252,7 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 			summary = clip(t, 140)
 			break
 		}
-		tasks = append(tasks, liveTask{Name: f.Name, Title: title, Summary: summary, Mod: f.Mod})
+		tasks = append(tasks, liveTask{Name: f.Name, Title: title, Summary: summary, Text: clip(strings.TrimSpace(f.Text), 1500), Mod: f.Mod})
 	}
 	type pendingView struct {
 		ID      string    `json:"id"`

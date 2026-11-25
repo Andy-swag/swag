@@ -661,6 +661,28 @@
   let inboxQuery = "";
   const inboxOpen = new Set();
 
+  function renderRichSnippet(raw, esc) {
+    const src = String(raw || "");
+    const re = /https?:\/\/[^\s)）>]+/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      const u = m[0].replace(/[.,;，。；]+$/, "");
+      const trail = m[0].slice(u.length);
+      let label = "链接 ↗";
+      if (/applink\.feishu\.cn\/client\/chat/i.test(u)) label = "飞书消息 ↗";
+      else if (/larkoffice\.com\/docx|feishu\.cn\/docx/i.test(u)) label = "飞书文档 ↗";
+      else if (/larkoffice\.com\/wiki|feishu\.cn\/wiki/i.test(u)) label = "飞书知识库 ↗";
+      else if (/larkoffice\.com|feishu\.cn/i.test(u)) label = "飞书链接 ↗";
+      else {
+        try { const h = new URL(u).hostname.replace(/^www\./, ""); label = `${h} ↗`; } catch {}
+      }
+      out += `<a class="pi-link" href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>${esc(trail)}`;
+      last = m.index + m[0].length;
+    }
+    return out + esc(src.slice(last));
+  }
+
   function classifyInbox(t, acked, activeWorkers, needReasons) {
     const txt = String(t.text || "");
     const low = txt.toLowerCase();
@@ -678,7 +700,6 @@
     const activeW = activeWorkers && from ? activeWorkers[from] : null;
     const isBlocked = /is blocked|block(ed)?:/i.test(txt);
     const isFailed = /failed to start|marked failed|worker .* failed:/i.test(txt);
-    const isFeishuReport = isFeishuTask && t.source === "worker" && /^report from /i.test(txt);
 
     let needReason = "";
     if (!isAck) {
@@ -687,16 +708,25 @@
       } else if (t.action === "candidate") needReason = "外部事件，等你决定";
       else if (isBlocked && activeW && activeW.status === "blocked") needReason = "当前阻塞中，需去终端确认";
       else if (isFailed && activeW) needReason = "运行异常，需查看";
-      else if (isFeishuReport && (Date.now() - Date.parse(t.at || 0)) < 12 * 3600 * 1000) needReason = "飞书待办汇总，待确认是否派活";
     }
     const needsYou = !!needReason;
-    const lines = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    let title = (lines[0] || t.id).replace(/^report from ([^:]+):?/i, "$1 汇报：").replace(/^worker\s+/i, "");
-    if (title.length > 56) title = title.slice(0, 56) + "…";
-    const fullText = txt.trim();
-    const canExpand = fullText.length > 110 || lines.length > 2;
+    let bodyText = txt.trim();
+    const repM = bodyText.match(/^report from ([^:\r\n]+):?\s*/i);
+    let title = "";
+    if (repM) {
+      bodyText = bodyText.slice(repM[0].length).trim();
+      const firstBodyLine = (bodyText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "");
+      title = firstBodyLine ? `${repM[1].trim()} · ${firstBodyLine}` : `${repM[1].trim()} 汇报`;
+    } else {
+      const lines = bodyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      title = (lines[0] || t.id).replace(/^worker\s+/i, "");
+    }
+    if (title.length > 58) title = title.slice(0, 58) + "…";
+    const fullText = bodyText || txt.trim();
+    const bodyLines = fullText.split(/\r?\n/).filter((l) => l.trim());
+    const canExpand = fullText.length > 110 || bodyLines.length > 2;
     const paneID = activeW?.pane_id || "";
-    const firstURL = (fullText.match(/https?:\/\/[^\s)）>]+/) || [""])[0];
+    const firstURL = (txt.match(/https?:\/\/[^\s)）>]+/) || [""])[0];
     return { cat, catLabel, av, avCls, needsYou, needReason, isAck, title, fullText, canExpand, paneID, firstURL };
   }
 
@@ -845,7 +875,7 @@
             <div class="pi-title" title="${esc(m.title)}">${esc(m.title)}<span class="pi-tag">${esc(m.catLabel)}</span></div>
             <span class="pi-time">${esc(fmtClock(t.at))}</span>
           </div>
-          <div class="pi-snippet">${esc(m.fullText)}</div>
+          <div class="pi-snippet">${renderRichSnippet(m.fullText, esc)}</div>
           <div class="pi-foot">
             <span class="pi-status"><span class="pi-dot ${m.needsYou ? "pi-dot-need" : "pi-dot-done"}"></span>${esc(m.needsYou ? m.needReason : (t.status === "queued" ? "排队等 Swag 处理" : (m.isAck ? "已标为已看" : "已处理")))}</span>
             <span class="mono">#${esc(t.id)}</span>
@@ -1143,27 +1173,37 @@
         </div>`;
       }).join("");
 
-      const taskHTML = showTasks.map((t) => `<div class="pi-card">
-        <div class="pi-avatar pi-av-timer">任</div>
-        <div class="pi-body">
-          <div class="pi-top">
-            <div class="pi-title">${esc(t.title)}<span class="pi-tag">进行中任务</span></div>
-            <span class="pi-time">${esc(fmtClock(t.mod))}</span>
+      const taskHTML = showTasks.map((t) => {
+        const key = "task:" + t.name;
+        const isOpen = inboxOpen.has(key);
+        const bodyTxt = isOpen && t.text ? t.text : (t.summary || t.name);
+        const canExp = !!(t.text && t.text.length > 100);
+        return `<div class="pi-card ${isOpen ? "is-open" : ""}">
+          <div class="pi-avatar pi-av-timer">任</div>
+          <div class="pi-body">
+            <div class="pi-top">
+              <div class="pi-title">${esc(t.title)}<span class="pi-tag">进行中任务</span></div>
+              <span class="pi-time">${esc(fmtClock(t.mod))}</span>
+            </div>
+            <div class="pi-snippet">${renderRichSnippet(bodyTxt, esc)}</div>
+            <div class="pi-foot">
+              <span class="pi-status"><span class="pi-dot pi-dot-need"></span>任务进行中（完成后自动归档）</span>
+              <span class="grow"></span>
+              ${canExp ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-expand="${esc(key)}">${isOpen ? "收起" : "展开详情"}</button>` : ""}
+              <button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`汇报一下当前任务「${t.title}」的最新进展和下一步`)}">催问进展</button>
+            </div>
           </div>
-          <div class="pi-snippet">${esc(t.summary || t.name)}</div>
-          <div class="pi-foot">
-            <span class="pi-status"><span class="pi-dot pi-dot-need"></span>任务进行中（完成后自动归档）</span>
-            <span class="grow"></span>
-            <button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`汇报一下当前任务「${t.title}」的最新进展和下一步`) }">催问进展</button>
-          </div>
-        </div>
-      </div>`).join("");
+        </div>`;
+      }).join("");
 
       const todoById = new Map(todos.map((t) => [t.id, t]));
       const todoHTML = showTodos.map((t) => {
         const done = t.status === "done";
         const dispatched = t.status === "dispatched";
         const sel = todoBatchMode && todoSelected.has(t.id);
+        const expKey = "td:" + t.id;
+        const isOpen = inboxOpen.has(expKey);
+        const canExp = !!(t.detail && (t.detail.length > 90 || t.detail.includes("\n")));
         const srcLab = t.source === "feishu" ? "飞书" : t.source === "agent" ? "助手" : "手动";
         const priTag = t.priority === "high"
           ? `<span class="pi-tag pi-pri-high">高优先</span>`
@@ -1174,7 +1214,7 @@
           : dispatched
             ? `已派给 Swag${t.dispatched_at ? " · " + fmtClock(t.dispatched_at) : ""}`
             : "待处理";
-        return `<div class="pi-card todo-card ${done ? "is-done" : dispatched ? "is-dispatched" : ""} ${sel ? "is-sel" : ""}" data-td-id="${esc(t.id)}">
+        return `<div class="pi-card todo-card ${done ? "is-done" : dispatched ? "is-dispatched" : ""} ${sel ? "is-sel" : ""} ${isOpen ? "is-open" : ""}" data-td-id="${esc(t.id)}">
           ${todoBatchMode
             ? `<input type="checkbox" class="td-sel-chk" data-td-sel="${esc(t.id)}" ${sel ? "checked" : ""}>`
             : `<button type="button" class="todo-chk ${done ? "td-chk-done" : ""}" data-td-toggle="${esc(t.id)}" title="${done ? "标为未完成" : "标为已完成"}">${done ? "✓" : ""}</button>`}
@@ -1183,10 +1223,11 @@
               <div class="pi-title">${esc(t.title)}<span class="pi-tag">${esc(srcLab)}</span>${dispatched ? `<span class="pi-tag td-tag-run">已派发</span>` : ""}${priTag}${t.due ? `<span class="pi-tag">${esc(t.due)}</span>` : ""}</div>
               <span class="pi-time">${esc(fmtClock(t.updated_at || t.created_at))}</span>
             </div>
-            ${t.detail ? `<div class="pi-snippet">${esc(t.detail)}</div>` : ""}
+            ${t.detail ? `<div class="pi-snippet">${renderRichSnippet(t.detail, esc)}</div>` : ""}
             <div class="pi-foot">
               <span class="pi-status"><span class="pi-dot ${statusDot}"></span>${esc(statusLab)}</span>
               <span class="grow"></span>
+              ${canExp ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-expand="${esc(expKey)}">${isOpen ? "收起" : "展开全文"}</button>` : ""}
               ${t.link ? `<a class="btn ghost small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(t.link)}" target="_blank" rel="noopener">原链接</a>` : ""}
               ${!done && !dispatched && !todoBatchMode ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-dispatch="${esc(t.id)}">派给 Swag</button>` : ""}
               ${dispatched && !todoBatchMode ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`汇报一下已派待办 [todo:${t.id}]「${t.title}」的最新进展和结果`)}">催问进展</button><button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-reopen="${esc(t.id)}">退回待处理</button>` : ""}

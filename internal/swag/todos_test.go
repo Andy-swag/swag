@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestInboxNeedDeduplicatesFeishuReportsAndTracksAck(t *testing.T) {
+func TestInboxNeedSkipsRoutineFeishuReportsAndTracksRealAlerts(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SWAG_HOME", tmp)
 
@@ -21,8 +21,8 @@ func TestInboxNeedDeduplicatesFeishuReportsAndTracksAck(t *testing.T) {
 		dir: tmp,
 		st: &State{
 			Triggers: []*Trigger{
-				{ID: "t1", Source: "worker", From: "feishu-todo-1830", Text: "report from feishu-todo-1830: started scan", Status: "done", At: now.Add(-20 * time.Minute)},
-				{ID: "t2", Source: "worker", From: "feishu-todo-1830", Text: "report from feishu-todo-1830: final summary", Status: "done", At: now.Add(-10 * time.Minute)},
+				{ID: "t1", Source: "worker", From: "feishu-todo-1830", Text: "report from feishu-todo-1830: 新增 0 条", Status: "done", At: now.Add(-10 * time.Minute)},
+				{ID: "t2", Source: "webhook:github", From: "github", Text: "PR #12 opened", Status: "done", Action: "candidate", At: now.Add(-5 * time.Minute)},
 				{ID: "t3", Source: "worker", From: "worker-a", Text: "report from worker-a: waiting", Status: "queued", At: now.Add(-1 * time.Minute)},
 			},
 			Workers: map[string]*Worker{},
@@ -30,17 +30,11 @@ func TestInboxNeedDeduplicatesFeishuReportsAndTracksAck(t *testing.T) {
 	}
 
 	reasons := sp.inboxNeedReasonsLocked(now)
-	if len(reasons) != 1 {
-		t.Fatalf("expected 1 inbox item needing human (latest feishu report only; non-paused queued belongs to Swag), got %d: %v", len(reasons), reasons)
+	if len(reasons) != 1 || reasons["t2"] == "" {
+		t.Fatalf("expected only candidate t2 in inbox needs (routine feishu worker reports belong in Todos/Processed), got %v", reasons)
 	}
 	if _, ok := reasons["t1"]; ok {
-		t.Fatalf("older progress report t1 should be superseded by t2")
-	}
-	if _, ok := reasons["t3"]; ok {
-		t.Fatalf("queued trigger t3 should not interrupt human while Swag is running")
-	}
-	if reasons["t2"] == "" {
-		t.Fatalf("expected t2 to be flagged, got %v", reasons)
+		t.Fatalf("routine feishu worker report t1 should not alert Inbox")
 	}
 
 	sp.st.Settings.Paused = true
