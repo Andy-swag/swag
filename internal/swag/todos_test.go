@@ -203,3 +203,19 @@ func TestDreamProposalsAutoCreateTodos(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeRouterMemDirPrefersDreamWork(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	if got := nodeRouterMemDir(); got != filepath.Join(tmp, "router", "memory") {
+		t.Fatalf("expected fallback to router/memory, got %s", got)
+	}
+	dw := filepath.Join(tmp, dreamWorkSubdir, "memory")
+	if err := os.MkdirAll(dw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := nodeRouterMemDir(); got != dw {
+		t.Fatalf("expected dream-work/memory when present, got %s", got)
+	}
+}

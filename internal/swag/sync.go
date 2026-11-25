@@ -186,9 +186,16 @@ func (s *Server) nodeDreamPull(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func nodeRouterMemDir() string {
+	dw := filepath.Join(swagDir(), dreamWorkSubdir, "memory")
+	if fi, err := os.Stat(dw); err == nil && fi.IsDir() {
+		return dw
+	}
+	return filepath.Join(swagDir(), "router", "memory")
+}
+
 func (s *Server) nodeRouterMemoryGet(w http.ResponseWriter, r *http.Request) {
-	dir := filepath.Join(swagDir(), "router", "memory")
-	writeJSON(w, 200, map[string]any{"files": collectDirFiles(dir, true)})
+	writeJSON(w, 200, map[string]any{"files": collectDirFiles(nodeRouterMemDir(), true)})
 }
 
 func (s *Server) nodeRouterMemorySave(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +211,7 @@ func (s *Server) nodeRouterMemorySave(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "invalid memory path"})
 		return
 	}
-	dst := filepath.Join(swagDir(), "router", "memory", filepath.FromSlash(rel))
+	dst := filepath.Join(nodeRouterMemDir(), filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
