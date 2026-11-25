@@ -194,16 +194,21 @@
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div class="d-title"><div class="d-name">自动化</div><div class="d-meta muted">Always-on：事件进来，Swag 决定谁去做</div></div>
       </header>
-      <div class="tabs" id="auto-tabs">
-        <button data-tab="todos" class="on">待办 <span class="tab-badge blue" id="todo-badge" hidden></span></button>
-        <button data-tab="inbox">收件箱 <span class="tab-badge" id="inbox-badge" hidden></span></button>
-        <button data-tab="threads">线程</button>
-        <button data-tab="timers">定时</button>
-        <button data-tab="memory">记忆</button>
-        <button data-tab="usage">用量</button>
-        <button data-tab="pool">模型池</button>
-        <button data-tab="hooks">接入</button>
-        <button data-tab="settings">设置</button>
+      <div class="auto-tabs-shell" id="auto-tabs">
+        <div class="tabs">
+          <button data-tab="todos" class="on">待办 <span class="tab-badge blue" id="todo-badge" hidden></span></button>
+          <button data-tab="inbox">告警与日志 <span class="tab-badge" id="inbox-badge" hidden></span></button>
+          <button data-tab="timers">定时</button>
+          <button data-tab="memory">记忆</button>
+          <button data-tab="usage">用量</button>
+          <button type="button" class="auto-cfg-btn" id="auto-cfg-btn" aria-expanded="false">配置 ▾</button>
+        </div>
+        <div class="auto-cfg-menu" id="auto-cfg-menu" hidden>
+          <button data-tab="pool">模型池</button>
+          <button data-tab="threads">线程</button>
+          <button data-tab="hooks">接入</button>
+          <button data-tab="settings">设置</button>
+        </div>
       </div>
       <div class="auto-body" id="auto-body"></div>
     </section>

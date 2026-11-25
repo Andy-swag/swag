@@ -731,7 +731,7 @@
   }
 
   function syncInboxBadges(n) {
-    const tip = n ? `收件箱中有 ${n} 条需要你处理` : "";
+    const tip = n ? `告警与日志中有 ${n} 条需要你处理` : "";
     for (const sel of ["#nav-queue", "#inbox-badge"]) {
       const el = document.querySelector(sel);
       if (el) { el.hidden = !n; el.textContent = n || ""; el.title = tip; }
@@ -769,7 +769,7 @@
           <label class="pool-field">关联链接（可选）<input data-tf="link" class="mono" value="${esc(d.link || "")}" placeholder="https://..."></label>
         </div>
         <label class="pool-field">补充说明（可选）<textarea data-tf="detail" placeholder="背景上下文、验收标准或相关线索…">${esc(d.detail || "")}</textarea></label>
-        ${ackId ? `<label class="pi-check-row"><input type="checkbox" data-tf="ack" checked> <span>创建后同时将原收件箱条目「标为已看」</span></label>` : ""}
+        ${ackId ? `<label class="pi-check-row"><input type="checkbox" data-tf="ack" checked> <span>创建后同时将原告警条目「标为已看」</span></label>` : ""}
       </div>
       <div class="pool-modal-foot">
         <span class="grow"></span>
@@ -917,7 +917,7 @@
       </div>
       <input type="search" id="pi-search" class="pi-search" value="${esc(inboxQuery)}" placeholder="搜索标题、来源、内容…">
       <div class="pi-chips">${cats.map(([k, l]) => `<button type="button" class="pi-chip ${inboxCat === k ? "on" : ""}" data-pic="${k}">${l}</button>`).join("")}</div>
-      ${groupsHTML || `<div class="pool-empty">${inboxView === "need" ? "当前筛选下没有需要你处理的事件 🎉" : "没有匹配的收件箱事件"}</div>`}
+      ${groupsHTML || `<div class="pool-empty">${inboxView === "need" ? "当前筛选下没有需要你处理的告警 🎉" : "没有匹配的事件日志"}</div>`}
     </div>`;
 
     if (activeSearch) {
@@ -946,7 +946,7 @@
         if (!x) return;
         const src = x.m.cat === "feishu" ? "feishu" : x.m.cat === "agent" ? "agent" : "manual";
         openTodoModal({
-          modalTitle: "从收件箱转为待办",
+          modalTitle: "从告警日志转为待办",
           title: x.m.title.replace(/汇报：$/, "").trim(),
           source: src,
           priority: "medium",
@@ -1099,6 +1099,7 @@
     let todos = data.todos || [];
     const liveTasks = data.live_tasks || [];
     const pending = data.pending || [];
+    const deliverables = data.deliverables || [];
 
     const syncTodoBadge = () => {
       const openTodos = todos.filter((t) => !t.status || t.status === "open").length;
@@ -1138,7 +1139,7 @@
       const showTasks = showLiveBand && (todoSrc === "all" || todoSrc === "task")
         ? liveTasks.filter((t) => matchQ(t.title + " " + t.summary + " " + t.name))
         : [];
-      const showTodos = todos.filter((t) => {
+      const showTodos = todoFilter === "docs" ? [] : todos.filter((t) => {
         const st = t.status || "open";
         if (todoFilter === "open" && st !== "open") return false;
         if (todoFilter === "dispatched" && st !== "dispatched") return false;
@@ -1146,6 +1147,9 @@
         if (todoSrc !== "all" && t.source !== todoSrc) return false;
         return matchQ(t.title + " " + (t.detail || "") + " " + (t.source || ""));
       });
+      const showDocs = todoFilter === "docs"
+        ? deliverables.filter((d) => matchQ(d.title + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || "")))
+        : [];
 
       const pendHTML = showPend.map((p) => {
         const bodyTxt = (p.text || p.summary || "").trim();
@@ -1178,6 +1182,7 @@
         const isOpen = inboxOpen.has(key);
         const bodyTxt = isOpen && t.text ? t.text : (t.summary || t.name);
         const canExp = !!(t.text && t.text.length > 100);
+        const workersHTML = (t.workers || []).map((w) => `<a class="btn small td-wk-pill" href="#/p/${encodeURIComponent(w.pane_id)}" title="查看 ${esc(w.name)} 终端"><span class="pi-dot ${w.status === "working" ? "pi-dot-run" : "pi-dot-need"}"></span>${esc(w.name)} · 看终端</a>`).join("");
         return `<div class="pi-card ${isOpen ? "is-open" : ""}">
           <div class="pi-avatar pi-av-timer">任</div>
           <div class="pi-body">
@@ -1189,6 +1194,7 @@
             <div class="pi-foot">
               <span class="pi-status"><span class="pi-dot pi-dot-need"></span>任务进行中（完成后自动归档）</span>
               <span class="grow"></span>
+              ${workersHTML}
               ${canExp ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-expand="${esc(key)}">${isOpen ? "收起" : "展开详情"}</button>` : ""}
               <button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-ask="${esc(`汇报一下当前任务「${t.title}」的最新进展和下一步`)}">催问进展</button>
             </div>
@@ -1237,9 +1243,26 @@
         </div>`;
       }).join("");
 
+      const docsHTML = showDocs.map((d) => `<div class="pi-card">
+        <div class="pi-avatar pi-av-doc">文</div>
+        <div class="pi-body">
+          <div class="pi-top">
+            <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}<span class="pi-tag">${esc(d.doc_type || "飞书文档")}</span></div>
+            <span class="pi-time">${esc(fmtClock(d.updated_at))}</span>
+          </div>
+          ${d.summary && d.summary !== d.title ? `<div class="pi-snippet">${esc(d.summary)}</div>` : ""}
+          <div class="pi-foot">
+            <span class="pi-status"><span class="pi-dot pi-dot-done"></span>来源：${esc(d.source || "对话汇报")}</span>
+            <span class="grow"></span>
+            <a class="btn small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(d.url)}" target="_blank" rel="noopener">打开飞书文档 ↗</a>
+          </div>
+        </div>
+      </div>`).join("");
+
       const openTotal = syncTodoBadge();
       const dispatchedTotal = todos.filter((t) => t.status === "dispatched").length;
       const doneTotal = todos.filter((t) => t.status === "done").length;
+      const docsTotal = deliverables.length;
       const srcChips = [
         ["all", "全部"],
         ["pending", `待审批 (${pending.length})`],
@@ -1251,7 +1274,7 @@
       const visTodoIds = showTodos.map((t) => t.id);
       const selCount = todoSelected.size;
       const allVisSelected = visTodoIds.length > 0 && visTodoIds.every((id) => todoSelected.has(id));
-      const batchBarHTML = todoBatchMode ? `<div class="td-batch-bar">
+      const batchBarHTML = todoBatchMode && todoFilter !== "docs" ? `<div class="td-batch-bar">
         <button type="button" class="btn small" id="td-sel-all">${allVisSelected ? "取消全选" : `全选当前 (${visTodoIds.length})`}</button>
         <span class="muted">已选 <b>${selCount}</b> 项</span>
         <span class="grow"></span>
@@ -1267,19 +1290,22 @@
             <button type="button" class="pi-tab ${todoFilter === "open" ? "on" : ""}" data-tdf="open">待处理${openTotal ? `<span class="cnt">${openTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "dispatched" ? "on" : ""}" data-tdf="dispatched">已派发${dispatchedTotal ? ` <span class="muted">${dispatchedTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "done" ? "on" : ""}" data-tdf="done">已完成${doneTotal ? ` <span class="muted">${doneTotal}</span>` : ""}</button>
+            <button type="button" class="pi-tab ${todoFilter === "docs" ? "on" : ""}" data-tdf="docs">复盘文档${docsTotal ? ` <span class="muted">${docsTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "all" ? "on" : ""}" data-tdf="all">全部</button>
           </div>
           <span class="grow"></span>
+          ${todoFilter === "docs" && showDocs.length ? `<button type="button" class="btn small" id="td-copy-docs">复制 Markdown 清单</button>` : ""}
           ${todoFilter === "done" && doneTotal && !todoBatchMode ? `<button type="button" class="btn ghost small" id="td-clear-done">清空已完成</button>` : ""}
-          ${todos.length ? `<button type="button" class="btn ${todoBatchMode ? "primary" : ""} small" id="td-batch-toggle">${todoBatchMode ? "完成管理" : "批量管理"}</button>` : ""}
+          ${todoFilter !== "docs" && todos.length ? `<button type="button" class="btn ${todoBatchMode ? "primary" : ""} small" id="td-batch-toggle">${todoBatchMode ? "完成管理" : "批量管理"}</button>` : ""}
           <button type="button" class="btn primary small" id="td-add">+ 新建待办</button>
         </div>
         ${batchBarHTML}
-        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="搜索待办标题、详情、来源…">
-        <div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>
+        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="${todoFilter === "docs" ? "搜索复盘文档标题、来源…" : "搜索待办标题、详情、来源…"}">
+        ${todoFilter === "docs" ? "" : `<div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>`}
         <div class="pi-list">
-          ${pendHTML}${taskHTML}${todoHTML}
-          ${!(pendHTML || taskHTML || todoHTML) ? `<div class="pool-empty">当前筛选下没有待办事项 🎉</div>` : ""}
+          ${todoFilter === "docs"
+            ? (docsHTML || `<div class="pool-empty">还没有提取到飞书复盘/交付文档链接（任务完结生成飞书文档后会自动收录）</div>`)
+            : `${pendHTML}${taskHTML}${todoHTML}${!(pendHTML || taskHTML || todoHTML) ? `<div class="pool-empty">当前筛选下没有待办事项 🎉</div>` : ""}`}
         </div>
       </div>`;
 
@@ -1431,6 +1457,12 @@
           catch (err) { toast(err.message, "attn"); silentReload(); }
           return;
         }
+        if (e.target.closest("#td-copy-docs")) {
+          const md = showDocs.map((d, i) => `${i + 1}. [${d.title}](${d.url})${d.source ? `（${d.source}）` : ""}`).join("\n");
+          try { await navigator.clipboard.writeText(md); toast(`已复制 ${showDocs.length} 条复盘文档 Markdown 清单`); }
+          catch { toast("复制失败，请手动复制", "attn"); }
+          return;
+        }
         if (e.target.closest("#td-add")) {
           openTodoModal({ modalTitle: "新建待办", source: todoSrc === "feishu" ? "feishu" : "manual", priority: "medium" }, api, esc, toast, {
             onDispatch,
@@ -1446,25 +1478,34 @@
     paint();
   }
 
-  function syncIdleReapButton(btn, workers, api, esc, toast, onReaped) {
+  function syncIdleReapButton(btn, workers, agents, api, esc, toast, onReaped) {
     if (!btn) return;
-    const idle = (workers || []).filter((w) => !w.ended && (w.status === "done" || w.status === "idle"));
-    btn.hidden = idle.length === 0;
-    btn.textContent = idle.length ? `清理空闲 (${idle.length})` : "清理空闲";
-    btn._idleCount = idle.length;
+    const activeSwag = (workers || []).filter((w) => !w.ended);
+    const swagPanes = new Set(activeSwag.map((w) => w.pane_id).filter(Boolean));
+    const swagNames = new Set(["swag", "swag-dream", ...activeSwag.map((w) => w.name).filter(Boolean)]);
+    const idleSwag = activeSwag.filter((w) => w.status === "done" || w.status === "idle");
+    const idleManual = (agents || []).filter((a) => (a.status === "done" || a.status === "idle") && !swagNames.has(a.name) && !swagPanes.has(a.pane_id));
+    const total = idleSwag.length + idleManual.length;
+    btn.hidden = total === 0;
+    btn.textContent = total ? `清理空闲 (${total})` : "清理空闲";
+    btn._idleSwag = idleSwag.length;
+    btn._idleManual = idleManual.length;
     if (btn._reapBound) return;
     btn._reapBound = true;
     btn.addEventListener("click", async () => {
-      const n = btn._idleCount || 0;
+      const ns = btn._idleSwag || 0, nm = btn._idleManual || 0, n = ns + nm;
       if (!n) return;
+      const parts = [];
+      if (ns) parts.push(`${ns} 个 Swag 派出会话`);
+      if (nm) parts.push(`${nm} 个手动打开的空闲终端`);
       if (!(await openConfirmModal({
-        title: `归档 ${n} 个已完成空闲会话`,
-        message: "仅关闭已完成且空闲的 Swag 派出终端，正在运行/阻塞中或你手动开的终端不受影响；所有对话记录会自动保留在下方「最近」中，可随时恢复。",
+        title: `归档 ${n} 个空闲会话`,
+        message: `将关闭 ${parts.join("和")}。正在运行/阻塞中的任务不受影响；关闭后对话记录保留在下方「最近」中，可随时恢复。`,
         confirmText: "确认归档",
       }, esc))) return;
       btn.disabled = true;
       try {
-        const r = await api("/api/super/workers/reap", { body: {} });
+        const r = await api("/api/super/workers/reap", { body: { include_manual: nm > 0 } });
         const cnt = r.count || 0;
         toast(cnt ? `已归档 ${cnt} 个空闲会话（记录已保留）` : "没有可归档的空闲会话");
         if (onReaped) onReaped();
@@ -1475,6 +1516,60 @@
       }
     });
   }
+
+  (function initAutoCfgMenu() {
+    const cfgLabels = { pool: "模型池", threads: "线程", hooks: "接入", settings: "设置" };
+    const wire = () => {
+      const shell = document.getElementById("auto-tabs");
+      const btn = document.getElementById("auto-cfg-btn");
+      const menu = document.getElementById("auto-cfg-menu");
+      if (!shell || !btn || !menu || btn._cfgWired) return;
+      btn._cfgWired = true;
+      const syncLabel = () => {
+        const active = menu.querySelector("button.on");
+        const tab = active?.dataset.tab || "";
+        btn.classList.toggle("on", !!tab);
+        btn.textContent = tab ? `配置 · ${cfgLabels[tab] || tab} ▾` : "配置 ▾";
+      };
+      const setOpen = (open) => {
+        menu.hidden = !open;
+        btn.setAttribute("aria-expanded", String(open));
+        if (open) {
+          const shellRect = shell.getBoundingClientRect();
+          const btnRect = btn.getBoundingClientRect();
+          const maxLeft = Math.max(8, shellRect.width - 150);
+          menu.style.left = Math.min(Math.max(8, btnRect.left - shellRect.left), maxLeft) + "px";
+        }
+      };
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        setOpen(menu.hidden);
+      });
+      menu.addEventListener("click", (ev) => {
+        if (ev.target.closest("button[data-tab]")) {
+          setOpen(false);
+          setTimeout(syncLabel, 0);
+        }
+      });
+      shell.addEventListener("click", (ev) => {
+        if (ev.target.closest(".tabs button[data-tab]")) {
+          setOpen(false);
+          setTimeout(syncLabel, 0);
+        }
+      });
+      document.addEventListener("click", (ev) => {
+        if (!menu.hidden && !menu.contains(ev.target) && ev.target !== btn) setOpen(false);
+      });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && !menu.hidden) setOpen(false);
+      });
+      new MutationObserver(syncLabel).observe(menu, { attributes: true, subtree: true, attributeFilter: ["class"] });
+      syncLabel();
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
+    else wire();
+  })();
 
   window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton };
 })();

@@ -2,6 +2,7 @@ package swag
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -154,12 +155,76 @@ func (sp *Super) maybeReapIdleWorkers(ctx context.Context, now time.Time) {
 	sp.reapIdleWorkers(ctx, now, idleWorkerReapAfter, "空闲超 60 分钟自动归档")
 }
 
+func (s *Server) reapManualIdlePanes(ctx context.Context) []string {
+	if s.herdr == nil {
+		return nil
+	}
+	agents, err := s.herdr.Agents(ctx)
+	if err != nil {
+		return nil
+	}
+	swagPanes := map[string]bool{}
+	swagNames := map[string]bool{routerName: true, dreamName: true}
+	if s.sup != nil {
+		s.sup.mu.Lock()
+		for _, wk := range s.sup.st.Workers {
+			if wk != nil && !wk.Ended {
+				swagNames[wk.Name] = true
+				if wk.PaneID != "" {
+					swagPanes[wk.PaneID] = true
+				}
+			}
+		}
+		s.sup.mu.Unlock()
+	}
+	closedWS := map[string]bool{}
+	var closed []string
+	for _, a := range agents {
+		if a.LaunchPending || a.WorkspaceID == "" || closedWS[a.WorkspaceID] {
+			continue
+		}
+		if a.AgentStatus != "idle" && a.AgentStatus != "done" {
+			continue
+		}
+		name := deref(a.Name)
+		if swagNames[name] || swagPanes[a.PaneID] {
+			continue
+		}
+		if err := s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": a.WorkspaceID}, nil); err == nil {
+			closedWS[a.WorkspaceID] = true
+			label := name
+			if label == "" {
+				label = a.TerminalTitle
+			}
+			if label == "" {
+				label = a.PaneID
+			}
+			closed = append(closed, label)
+		}
+	}
+	return closed
+}
+
 func (s *Server) superWorkersReap(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IncludeManual bool `json:"include_manual"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
 	reaped := s.sup.reapIdleWorkers(r.Context(), time.Now(), 0, "手动一键归档")
+	var manual []string
+	if body.IncludeManual {
+		manual = s.reapManualIdlePanes(r.Context())
+		reaped = append(reaped, manual...)
+	}
 	if reaped == nil {
 		reaped = []string{}
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "reaped": reaped, "count": len(reaped)})
+	if manual == nil {
+		manual = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "reaped": reaped, "manual_reaped": manual, "count": len(reaped)})
 }
 
 func (sp *Super) dupRecentUserSayLocked(text string, re *Quote) *Entry {

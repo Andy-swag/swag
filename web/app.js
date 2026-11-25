@@ -512,7 +512,7 @@
     // The next time Swag set itself to look again, under 自动化 where its
     // timers are: "明天 09:00 再看：复查 paper_df…".
     const f = sup.follow;
-    $("#nav-auto-sub").textContent = f?.next ? `${whenShort(f.next)} 再看：${f.next_text || ""}` : "待办 · 收件箱 · 定时";
+    $("#nav-auto-sub").textContent = f?.next ? `${whenShort(f.next)} 再看：${f.next_text || ""}` : "待办 · 告警日志 · 定时";
     $("#nav-auto-sub").title = f?.next ? `Swag 设的下一次跟进：${f.next_text || ""}（点开看进行中的任务）` : "";
     $("#nav-auto-sub").classList.toggle("follow", !!f?.next);
     $("#nav-swag-dot").className = "dot " + deckDot(r.status);
@@ -524,7 +524,7 @@
       np.title = pend.length ? `${pend.length} 条待你确认` : "";
     }
     const inboxNeed = typeof sup.inbox_need === "number" ? sup.inbox_need : (sup.queued || 0);
-    const qTip = inboxNeed ? `收件箱中有 ${inboxNeed} 条需要你处理` : "";
+    const qTip = inboxNeed ? `告警与日志中有 ${inboxNeed} 条需要你处理` : "";
     for (const el of [$("#nav-queue"), $("#inbox-badge")]) if (el) { el.hidden = !inboxNeed; el.textContent = inboxNeed || ""; el.title = qTip; }
     const tb = $("#todo-badge"); if (tb && typeof sup.todo_open === "number") { tb.hidden = !sup.todo_open; tb.textContent = sup.todo_open || ""; }
     $("#nav-swag").classList.toggle("active", view === "swag");
@@ -2674,7 +2674,7 @@
     const live = [...panes, ...liveExt].sort((x, y) => x.rank - y.rank);
     const busy = live.filter((x) => x.rank <= 1).length;
     $("#live-count").textContent = busy ? `${busy} 个在跑` : live.length || "";
-    window.SwagPanels?.syncIdleReapButton?.($("#live-reap"), sup.workers, api, esc, toast);
+    window.SwagPanels?.syncIdleReapButton?.($("#live-reap"), sup.workers, state.agents, api, esc, toast);
     $("#live-list").innerHTML = live.map((x) => x.html).join("")
       || `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Swag 派一个。</li>`;
 

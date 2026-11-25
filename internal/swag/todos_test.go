@@ -425,3 +425,41 @@ func TestSuperSayDeduplicatesRapidDoubleSubmit(t *testing.T) {
 		t.Fatalf("expected deduped response on 2nd submit, got %s", rec2.Body.String())
 	}
 }
+
+func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{
+		dir: tmp,
+		st: &State{
+			Entries: []*Entry{
+				{ID: "e1", Role: "swag", At: time.Now(), Text: "已完成交付：[DINOv2 接入复盘](https://example.larkoffice.com/docx/DocABC123?from=chat) 与知识库 https://example.feishu.cn/wiki/WikiXYZ999"},
+				{ID: "e2", Role: "swag", At: time.Now().Add(time.Minute), Text: "复盘文档：https://example.larkoffice.com/docx/DocABC123"},
+			},
+		},
+	}
+	doneDir := filepath.Join(sp.memDir(), "tasks", "done")
+	if err := os.MkdirAll(doneDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(doneDir, "merlin.md"), []byte("# Merlin 单卡预检\n复盘文档：https://example.larkoffice.com/docx/DocMerlin777\n"), 0o600)
+
+	got := sp.collectDeliverables()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 deduplicated deliverables, got %d: %+v", len(got), got)
+	}
+	byURL := map[string]DeliverableItem{}
+	for _, d := range got {
+		byURL[d.URL] = d
+	}
+	if d := byURL["https://example.larkoffice.com/docx/DocABC123"]; d.Title != "DINOv2 接入复盘" || d.DocType != "飞书文档" {
+		t.Fatalf("unexpected docx item: %+v", d)
+	}
+	if d := byURL["https://example.feishu.cn/wiki/WikiXYZ999"]; d.DocType != "知识库" {
+		t.Fatalf("unexpected wiki item: %+v", d)
+	}
+	if d := byURL["https://example.larkoffice.com/docx/DocMerlin777"]; d.Source != "tasks/done/merlin.md" {
+		t.Fatalf("unexpected task done item: %+v", d)
+	}
+}

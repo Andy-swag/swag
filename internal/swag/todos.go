@@ -226,19 +226,44 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 		}
 		return todos[i].UpdatedAt.After(todos[j].UpdatedAt)
 	})
-	type liveTask struct {
-		Name    string    `json:"name"`
-		Title   string    `json:"title"`
-		Summary string    `json:"summary"`
-		Text    string    `json:"text,omitempty"`
-		Mod     time.Time `json:"mod"`
+	type liveTaskWorker struct {
+		Name    string `json:"name"`
+		PaneID  string `json:"pane_id"`
+		Status  string `json:"status"`
+		Kind    string `json:"kind"`
+		Machine string `json:"machine,omitempty"`
 	}
+	type liveTask struct {
+		Name    string           `json:"name"`
+		Title   string           `json:"title"`
+		Summary string           `json:"summary"`
+		Text    string           `json:"text,omitempty"`
+		Mod     time.Time        `json:"mod"`
+		Workers []liveTaskWorker `json:"workers,omitempty"`
+	}
+	sp.mu.Lock()
+	rawPend := sp.pendingLocked(time.Now())
+	entryText := map[string]string{}
+	for _, e := range sp.st.Entries {
+		entryText[e.ID] = e.Text
+	}
+	var activeW []liveTaskWorker
+	workerTasks := map[string]string{}
+	for _, wk := range sp.st.Workers {
+		if wk != nil && !wk.Ended && wk.PaneID != "" {
+			activeW = append(activeW, liveTaskWorker{Name: wk.Name, PaneID: wk.PaneID, Status: wk.Status, Kind: wk.Kind, Machine: wk.Machine})
+			workerTasks[wk.Name] = strings.ToLower(wk.Task)
+		}
+	}
+	sp.mu.Unlock()
+	sort.Slice(activeW, func(i, j int) bool { return activeW[i].Name < activeW[j].Name })
 	var tasks []liveTask
 	for _, f := range sp.memFiles() {
 		if !strings.HasPrefix(f.Name, "tasks/") || strings.HasPrefix(f.Name, "tasks/done/") {
 			continue
 		}
-		title := strings.TrimSuffix(strings.TrimPrefix(f.Name, "tasks/"), ".md")
+		slug := strings.TrimSuffix(strings.TrimPrefix(f.Name, "tasks/"), ".md")
+		title := slug
 		summary := ""
 		for _, line := range strings.Split(f.Text, "\n") {
 			t := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#>-*• "))
@@ -252,7 +277,16 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 			summary = clip(t, 140)
 			break
 		}
-		tasks = append(tasks, liveTask{Name: f.Name, Title: title, Summary: summary, Text: clip(strings.TrimSpace(f.Text), 1500), Mod: f.Mod})
+		lowText := strings.ToLower(f.Text + "\n" + slug)
+		lowSlug := strings.ToLower(slug)
+		var matched []liveTaskWorker
+		for _, aw := range activeW {
+			ln := strings.ToLower(aw.Name)
+			if strings.Contains(lowText, ln) || (len(lowSlug) >= 4 && strings.Contains(workerTasks[aw.Name], lowSlug)) {
+				matched = append(matched, aw)
+			}
+		}
+		tasks = append(tasks, liveTask{Name: f.Name, Title: title, Summary: summary, Text: clip(strings.TrimSpace(f.Text), 1500), Mod: f.Mod, Workers: matched})
 	}
 	type pendingView struct {
 		ID      string    `json:"id"`
@@ -262,13 +296,6 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 		Options []string  `json:"options,omitempty"`
 		Check   bool      `json:"check,omitempty"`
 	}
-	sp.mu.Lock()
-	rawPend := sp.pendingLocked(time.Now())
-	entryText := map[string]string{}
-	for _, e := range sp.st.Entries {
-		entryText[e.ID] = e.Text
-	}
-	sp.mu.Unlock()
 	pending := make([]pendingView, 0, len(rawPend))
 	for _, p := range rawPend {
 		full := entryText[p.ID]
@@ -285,11 +312,13 @@ func (s *Server) superTodos(w http.ResponseWriter, r *http.Request) {
 			openTodos++
 		}
 	}
+	deliverables := sp.collectDeliverables()
 	writeJSON(w, 200, map[string]any{
-		"todos":      todos,
-		"live_tasks": tasks,
-		"pending":    pending,
-		"open_count": openTodos + len(tasks) + len(pending),
+		"todos":        todos,
+		"live_tasks":   tasks,
+		"pending":      pending,
+		"deliverables": deliverables,
+		"open_count":   openTodos + len(tasks) + len(pending),
 	})
 }
 
