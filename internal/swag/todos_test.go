@@ -268,3 +268,64 @@ func TestTodoDispatchedLifecycleAndNoDoubleCount(t *testing.T) {
 		t.Fatalf("expected td-1 done, got %q", got)
 	}
 }
+
+func TestIdleWorkerReaperSafetyAndManualReap(t *testing.T) {
+	now := time.Now()
+	sp := &Super{
+		subs: map[chan struct{}]bool{},
+		st: &State{
+			Workers: map[string]*Worker{
+				"old-done":   {Name: "old-done", Status: "done", Thread: mainThread, IdleSince: now.Add(-75 * time.Minute)},
+				"fresh-done": {Name: "fresh-done", Status: "done", Thread: mainThread, IdleSince: now.Add(-15 * time.Minute)},
+				"busy":       {Name: "busy", Status: "working", Thread: mainThread, CreatedAt: now.Add(-2 * time.Hour)},
+				"blocked":    {Name: "blocked", Status: "blocked", Thread: mainThread, IdleSince: now.Add(-2 * time.Hour)},
+				"subbed":     {Name: "subbed", Status: "done", Thread: "gh:pr#1", IdleSince: now.Add(-2 * time.Hour)},
+				"queued":     {Name: "queued", Status: "done", Thread: mainThread, IdleSince: now.Add(-2 * time.Hour)},
+				"timed":      {Name: "timed", Status: "done", Thread: mainThread, IdleSince: now.Add(-2 * time.Hour)},
+			},
+			Threads: map[string]*Thread{
+				"gh:pr#1": {ID: "gh:pr#1", Subscribers: []string{"subbed"}},
+			},
+			Triggers: []*Trigger{
+				{ID: "t1", Status: "queued", Targets: []string{"queued"}},
+			},
+			Timers: []*Timer{
+				{ID: "m1", Enabled: true, Target: "timed"},
+			},
+		},
+	}
+
+	autoReaped := sp.reapIdleWorkers(t.Context(), now, idleWorkerReapAfter, "自动归档")
+	if len(autoReaped) != 1 || autoReaped[0] != "old-done" {
+		t.Fatalf("expected only old-done auto-reaped, got %v", autoReaped)
+	}
+	if !sp.st.Workers["old-done"].Ended || sp.st.Workers["old-done"].Status != "gone" {
+		t.Fatalf("expected old-done marked ended/gone, got %+v", sp.st.Workers["old-done"])
+	}
+	if sp.st.Workers["fresh-done"].Ended {
+		t.Fatalf("fresh-done should not be auto-reaped before 60m")
+	}
+
+	// Manual reap endpoint immediately archives fresh-done while protecting busy/blocked/subbed/queued/timed.
+	s := &Server{sup: sp}
+	req := httptest.NewRequest("POST", "/api/super/workers/reap", bytes.NewReader([]byte(`{}`)))
+	rec := httptest.NewRecorder()
+	s.superWorkersReap(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("manual reap failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		OK     bool     `json:"ok"`
+		Reaped []string `json:"reaped"`
+		Count  int      `json:"count"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if !resp.OK || resp.Count != 1 || len(resp.Reaped) != 1 || resp.Reaped[0] != "fresh-done" {
+		t.Fatalf("expected manual reap to archive only fresh-done, got %+v", resp)
+	}
+	for _, keep := range []string{"busy", "blocked", "subbed", "queued", "timed"} {
+		if sp.st.Workers[keep].Ended {
+			t.Fatalf("protected worker %s must not be reaped", keep)
+		}
+	}
+}

@@ -1405,5 +1405,35 @@
     paint();
   }
 
-  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg };
+  function syncIdleReapButton(btn, workers, api, esc, toast, onReaped) {
+    if (!btn) return;
+    const idle = (workers || []).filter((w) => !w.ended && (w.status === "done" || w.status === "idle"));
+    btn.hidden = idle.length === 0;
+    btn.textContent = idle.length ? `清理空闲 (${idle.length})` : "清理空闲";
+    btn._idleCount = idle.length;
+    if (btn._reapBound) return;
+    btn._reapBound = true;
+    btn.addEventListener("click", async () => {
+      const n = btn._idleCount || 0;
+      if (!n) return;
+      if (!(await openConfirmModal({
+        title: `归档 ${n} 个已完成空闲会话`,
+        message: "仅关闭已完成且空闲的 Swag 派出终端，正在运行/阻塞中或你手动开的终端不受影响；所有对话记录会自动保留在下方「最近」中，可随时恢复。",
+        confirmText: "确认归档",
+      }, esc))) return;
+      btn.disabled = true;
+      try {
+        const r = await api("/api/super/workers/reap", { body: {} });
+        const cnt = r.count || 0;
+        toast(cnt ? `已归档 ${cnt} 个空闲会话（记录已保留）` : "没有可归档的空闲会话");
+        if (onReaped) onReaped();
+      } catch (err) {
+        toast(err.message, "attn");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton };
 })();

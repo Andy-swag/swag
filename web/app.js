@@ -2673,6 +2673,7 @@
     const live = [...panes, ...liveExt].sort((x, y) => x.rank - y.rank);
     const busy = live.filter((x) => x.rank <= 1).length;
     $("#live-count").textContent = busy ? `${busy} 个在跑` : live.length || "";
+    window.SwagPanels?.syncIdleReapButton?.($("#live-reap"), sup.workers, api, esc, toast);
     $("#live-list").innerHTML = live.map((x) => x.html).join("")
       || `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Swag 派一个。</li>`;
 

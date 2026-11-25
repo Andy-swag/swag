@@ -32,6 +32,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/report", s.superReport)
 	api("POST /api/super/subscribe", s.superSubscribe)
 	api("POST /api/super/stop", s.superStop)
+	api("POST /api/super/workers/reap", s.superWorkersReap)
 	api("POST /api/super/answer", s.superAnswer)
 	api("GET /api/super/show/{id}", s.superShow)
 	api("GET /api/super/list", s.superList)

@@ -61,6 +61,7 @@ type Super struct {
 	pinnedCache map[string]*Entry    // older pinned entries resolved from SQLite
 	notifyBuf   []notice
 	notifyAt    time.Time
+	lastReap    time.Time
 	seenAt      time.Time // when a page of Swag was last open in front of you
 	seenURL     string    // where that page was, for the link in a notification
 }
@@ -426,6 +427,13 @@ func (sp *Super) tick(parent context.Context) {
 		if a.Status == "blocked" && now.Sub(sp.lastAnswer[a.Pane]) < 2*time.Second {
 			continue // give a just-answered dialog a moment to clear (or show the next one)
 		}
+		if a.Status == "done" || a.Status == "idle" {
+			if w.IdleSince.IsZero() {
+				w.IdleSince, sp.dirty = now, true
+			}
+		} else if !w.IdleSince.IsZero() {
+			w.IdleSince, sp.dirty = time.Time{}, true
+		}
 		if a.Status != prev {
 			w.Status = a.Status
 			w.PaneID = a.Pane
@@ -519,8 +527,9 @@ func (sp *Super) tick(parent context.Context) {
 	sp.checkHandover(ctx, live, len(deliveries[routerName]) > 0)
 	sp.checkDream(ctx, live, len(deliveries[routerName]) > 0)
 
-	// 5. Watchdog.
+	// 5. Watchdog & idle worker auto-archiver.
 	sp.watchdog(ctx, live, routerAlive)
+	sp.maybeReapIdleWorkers(ctx, now)
 }
 
 // fromHuman keeps what the human said in the chat.
