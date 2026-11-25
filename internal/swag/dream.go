@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	dreamRetryMu     sync.Mutex
-	dreamNextTry     time.Time
-	dreamFailStreak  int
+	dreamRetryMu    sync.Mutex
+	dreamNextTry    time.Time
+	dreamFailStreak int
+	dreamFailDay    string
 )
 
 func dreamCanTry(now time.Time) bool {
@@ -29,6 +30,7 @@ func dreamRecordSuccess() {
 	dreamRetryMu.Lock()
 	dreamNextTry = time.Time{}
 	dreamFailStreak = 0
+	dreamFailDay = ""
 	dreamRetryMu.Unlock()
 }
 
@@ -37,6 +39,11 @@ func dreamRecordFailure(now time.Time, nightly bool) (suppressAlert, giveUpTonig
 	defer dreamRetryMu.Unlock()
 	if !nightly {
 		return false, false
+	}
+	day := now.Format("2006-01-02")
+	if dreamFailDay != day {
+		dreamFailDay = day
+		dreamFailStreak = 0
 	}
 	dreamFailStreak++
 	switch dreamFailStreak {
@@ -228,6 +235,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		}
 		sp.closeWorkspaces(bg, routerLabel)
 		sp.closeWorkspaces(bg, dreamLabel)
+		sp.PullRemoteRouterMemory(bg, true)
 		if err := sp.writeRouterFiles(); err != nil {
 			log.Printf("router files: %v", err)
 		}
@@ -390,6 +398,11 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 		fixes = dreamLine(journal, dreamFixPrefix)
 		scripts = dreamLine(journal, dreamScriptsPrefix)
 		addDreamProposalTodos(jName, skills, fixes, scripts)
+	} else if d.reason == "nightly" {
+		_, giveUp := dreamRecordFailure(time.Now(), true)
+		if giveUp {
+			sp.setLastDream(time.Now())
+		}
 	}
 	sp.mu.Lock()
 	sp.dream = nil
@@ -419,7 +432,7 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	}
 	sp.mu.Unlock()
 	if syncMirror {
-		go sp.SyncMemoryMirrors(context.Background())
+		go sp.syncMemoryMirrors(context.Background(), false)
 	}
 	sp.ensureRouter(ctx)
 }

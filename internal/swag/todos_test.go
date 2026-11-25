@@ -3,9 +3,11 @@ package swag
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -327,5 +329,79 @@ func TestIdleWorkerReaperSafetyAndManualReap(t *testing.T) {
 		if sp.st.Workers[keep].Ended {
 			t.Fatalf("protected worker %s must not be reaped", keep)
 		}
+	}
+}
+
+func TestCodexUsagePerTurnModelAndWindowAttribution(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rollout-multi.jsonl")
+	day1 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	lines := []string{
+		`{"timestamp":"` + day1.Format(time.RFC3339) + `","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}`,
+		`{"timestamp":"` + day1.Add(time.Minute).Format(time.RFC3339) + `","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":100,"output_tokens":100,"total_tokens":1000}}}}`,
+		`{"timestamp":"` + day1.Add(2*time.Minute).Format(time.RFC3339) + `","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":100,"output_tokens":100,"total_tokens":1000}}}}`,
+		`{"timestamp":"` + day2.Format(time.RFC3339) + `","type":"turn_context","payload":{"model":"gpt-6.2-sol"}}`,
+		`{"timestamp":"` + day2.Add(time.Minute).Format(time.RFC3339) + `","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1150,"cached_input_tokens":200,"output_tokens":150,"total_tokens":1300}}}}`,
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 1-day window ending on day2 must ONLY include day2's 300 delta under gpt-6.2-sol.
+	got1d := scanCodexRolloutBuckets(p, day2.Add(-time.Hour), "2026-11-25")
+	if len(got1d) != 1 || got1d[0].model != "gpt-6.2-sol" || got1d[0].tok.Total != 300 || got1d[0].tok.Input != 250 || got1d[0].tok.Output != 50 {
+		t.Fatalf("unexpected 1d buckets: %+v", got1d)
+	}
+	// Full history splits cleanly across both models without double counting duplicate heartbeat.
+	gotAll := scanCodexRolloutBuckets(p, time.Time{}, "2026-11-25")
+	if len(gotAll) != 2 || gotAll[0].model != "gpt-6.1-sol" || gotAll[0].tok.Total != 1000 || gotAll[1].model != "gpt-6.2-sol" || gotAll[1].tok.Total != 300 {
+		t.Fatalf("unexpected full buckets: %+v", gotAll)
+	}
+}
+
+func TestDreamFailureStreakResetsNextDay(t *testing.T) {
+	dreamRecordSuccess()
+	t.Cleanup(dreamRecordSuccess)
+
+	night1 := time.Date(2026, 11, 25, 4, 0, 0, 0, time.Local)
+	dreamRecordFailure(night1, true)
+	dreamRecordFailure(night1.Add(20*time.Minute), true)
+	_, give1 := dreamRecordFailure(night1.Add(70*time.Minute), true)
+	if !give1 {
+		t.Fatalf("expected giveUp on 3rd failure of night1")
+	}
+
+	night2 := night1.Add(24 * time.Hour)
+	sup2, give2 := dreamRecordFailure(night2, true)
+	if sup2 || give2 {
+		t.Fatalf("expected fresh streak on night2 1st failure, got suppress=%v giveUp=%v", sup2, give2)
+	}
+}
+
+func TestPoolLastProviderCooldownEnablesNativeFallback(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+	}))
+	defer srv.Close()
+
+	cfg := PoolConfig{
+		Providers: []PoolProvider{{ID: "sole", BaseURL: srv.URL, Enabled: true, Priority: 10, CooldownSec: 180}},
+		Tiers:     []ModelTier{{ID: "tier-fast", Providers: []string{"sole"}}},
+	}
+	if err := savePoolConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	req := httptest.NewRequest("POST", "/v1/responses", bytes.NewReader([]byte(`{"model":"tier-fast","input":"hi"}`)))
+	rec := httptest.NewRecorder()
+	s.proxyPoolRequest(rec, req, "/responses")
+	if rec.Code != 429 {
+		t.Fatalf("expected 429 from exhausted pool, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if poolHasReadyProvider(cfg, "tier-fast") {
+		t.Fatalf("expected sole 429 provider to enter cooldown so native fallback can trigger")
 	}
 }

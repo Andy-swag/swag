@@ -379,14 +379,28 @@ func parseFloatHeader(s string) (float64, error) {
 	return v, err
 }
 
+var (
+	poolClientsMu sync.Mutex
+	poolClients   = map[string]*http.Client{}
+)
+
 func poolHTTPClient(proxyRaw string) *http.Client {
+	key := strings.TrimSpace(proxyRaw)
+	poolClientsMu.Lock()
+	defer poolClientsMu.Unlock()
+	if c, ok := poolClients[key]; ok {
+		return c
+	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	if strings.TrimSpace(proxyRaw) != "" {
-		if u, err := url.Parse(strings.TrimSpace(proxyRaw)); err == nil {
+	tr.ResponseHeaderTimeout = 90 * time.Second
+	if key != "" {
+		if u, err := url.Parse(key); err == nil {
 			tr.Proxy = http.ProxyURL(u)
 		}
 	}
-	return &http.Client{Transport: tr, Timeout: 5 * time.Minute}
+	c := &http.Client{Transport: tr}
+	poolClients[key] = c
+	return c
 }
 
 func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix string) {
@@ -460,7 +474,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 			continue
 		}
 
-		if isFailoverStatus(resp.StatusCode) && idx+1 < len(cands) {
+		if isFailoverStatus(resp.StatusCode) {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 			poolMu.Lock()
@@ -473,7 +487,10 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 			poolMu.Unlock()
 			lastCode = resp.StatusCode
 			lastErr = p.ID + " " + rt.LastError
-			continue
+			if idx+1 < len(cands) {
+				continue
+			}
+			break
 		}
 
 		poolMu.Lock()

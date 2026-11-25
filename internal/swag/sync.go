@@ -250,10 +250,11 @@ func (s *Server) nodeDreamExternal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildLocalExternalDreamDigest(since time.Time, cwds []string, pinned map[string]bool) string {
-	rows, _ := s.desktopRows()
-	if len(rows) == 0 {
+	rawRows, _ := s.desktopRows()
+	if len(rawRows) == 0 {
 		return ""
 	}
+	rows := append([]desktopRow(nil), rawRows...)
 	const maxBytes = 40 << 10
 	var b strings.Builder
 	matchCwd := func(dir string) bool {
@@ -478,11 +479,17 @@ func (sp *Super) PushRemoteRouterMemoryFile(ctx context.Context, rel, text strin
 // SyncMemoryMirrors pushes the Hub's authoritative memory/ directory as a
 // read-only mirror (~/.swag/memory-mirror/) to every online remote node.
 func (sp *Super) SyncMemoryMirrors(ctx context.Context) map[string]string {
+	return sp.syncMemoryMirrors(ctx, true)
+}
+
+func (sp *Super) syncMemoryMirrors(ctx context.Context, pullFirst bool) map[string]string {
 	results := map[string]string{}
 	if sp.s == nil || sp.s.herdr == nil {
 		return results
 	}
-	sp.PullRemoteRouterMemory(ctx, true)
+	if pullFirst {
+		sp.PullRemoteRouterMemory(ctx, true)
+	}
 	files := collectDirFiles(sp.memDir(), true)
 	machines := sp.s.herdr.Machines()
 	var wg sync.WaitGroup

@@ -273,6 +273,9 @@ var larkEscape = strings.NewReplacer("<", "&lt;", ">", "&gt;", "*", "\\*", "`", 
 var mdMarks = strings.NewReplacer("**", "", "__", "", "`", "")
 
 func cardSummary(ns []notice) string {
+	if len(ns) == 0 {
+		return ""
+	}
 	pick := ns[len(ns)-1]
 	for _, n := range ns {
 		if n.tone == "error" {

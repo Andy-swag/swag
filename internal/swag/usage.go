@@ -49,18 +49,28 @@ var localUsageCache = struct {
 	data NodeUsage
 }{}
 
-func scanCodexRolloutUsage(path string) (model string, tok TokenBucket) {
+type codexUsageSlice struct {
+	day   string
+	model string
+	tok   TokenBucket
+}
+
+func scanCodexRolloutBuckets(path string, cutoff time.Time, fallbackDay string) []codexUsageSlice {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", tok
+		return nil
 	}
 	defer f.Close()
 	r := bufio.NewReaderSize(f, 256<<10)
+	model := ""
+	var prev TokenBucket
+	byKey := map[string]*codexUsageSlice{}
+	var order []string
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
 			s := string(line)
-			if model == "" && strings.Contains(s, `"turn_context"`) {
+			if strings.Contains(s, `"turn_context"`) {
 				var tc struct {
 					Payload struct {
 						Model string `json:"model"`
@@ -72,7 +82,8 @@ func scanCodexRolloutUsage(path string) (model string, tok TokenBucket) {
 			}
 			if strings.Contains(s, `"token_count"`) {
 				var ev struct {
-					Payload struct {
+					Timestamp string `json:"timestamp"`
+					Payload   struct {
 						Info *struct {
 							TotalTokenUsage struct {
 								InputTokens           int64 `json:"input_tokens"`
@@ -86,14 +97,45 @@ func scanCodexRolloutUsage(path string) (model string, tok TokenBucket) {
 				}
 				if json.Unmarshal(line, &ev) == nil && ev.Payload.Info != nil {
 					u := ev.Payload.Info.TotalTokenUsage
-					if u.TotalTokens > tok.Total {
-						tok = TokenBucket{
+					if u.TotalTokens > prev.Total {
+						delta := TokenBucket{
+							Input:     max(u.InputTokens-prev.Input, 0),
+							Cached:    max(u.CachedInputTokens-prev.Cached, 0),
+							Output:    max(u.OutputTokens-prev.Output, 0),
+							Reasoning: max(u.ReasoningOutputTokens-prev.Reasoning, 0),
+							Total:     u.TotalTokens - prev.Total,
+						}
+						prev = TokenBucket{
 							Input:     u.InputTokens,
 							Cached:    u.CachedInputTokens,
 							Output:    u.OutputTokens,
 							Reasoning: u.ReasoningOutputTokens,
 							Total:     u.TotalTokens,
-							Sessions:  1,
+						}
+						day := fallbackDay
+						inWindow := true
+						if ev.Timestamp != "" {
+							if ts, perr := time.Parse(time.RFC3339Nano, ev.Timestamp); perr == nil {
+								if !cutoff.IsZero() && ts.Before(cutoff) {
+									inWindow = false
+								} else {
+									day = ts.Local().Format("2006-01-02")
+								}
+							}
+						}
+						if inWindow {
+							m := model
+							if m == "" {
+								m = "codex-unknown"
+							}
+							key := day + "\x00" + m
+							sl, ok := byKey[key]
+							if !ok {
+								sl = &codexUsageSlice{day: day, model: m}
+								byKey[key] = sl
+								order = append(order, key)
+							}
+							sl.tok.add(delta)
 						}
 					}
 				}
@@ -102,6 +144,23 @@ func scanCodexRolloutUsage(path string) (model string, tok TokenBucket) {
 		if err != nil {
 			break
 		}
+	}
+	out := make([]codexUsageSlice, 0, len(order))
+	for i, k := range order {
+		sl := byKey[k]
+		if i == len(order)-1 {
+			sl.tok.Sessions = 1
+		}
+		out = append(out, *sl)
+	}
+	return out
+}
+
+func scanCodexRolloutUsage(path string) (model string, tok TokenBucket) {
+	slices := scanCodexRolloutBuckets(path, time.Time{}, "")
+	for _, sl := range slices {
+		model = sl.model
+		tok.add(sl.tok)
 	}
 	if model == "" {
 		model = "codex-unknown"
@@ -116,7 +175,9 @@ func scanClaudeSessionUsage(path string) (model string, tok TokenBucket) {
 	}
 	defer f.Close()
 	r := bufio.NewReaderSize(f, 256<<10)
-	seenMsg := map[string]bool{}
+	byMsg := map[string]TokenBucket{}
+	var order []string
+	anon := 0
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 && strings.Contains(string(line), `"input_tokens"`) {
@@ -133,27 +194,36 @@ func scanClaudeSessionUsage(path string) (model string, tok TokenBucket) {
 				} `json:"message"`
 			}
 			if json.Unmarshal(line, &ev) == nil && ev.Message.Usage != nil {
-				if ev.Message.ID != "" {
-					if seenMsg[ev.Message.ID] {
-						goto next
-					}
-					seenMsg[ev.Message.ID] = true
-				}
-				if ev.Message.Model != "" {
+				if ev.Message.Model != "" && !strings.HasPrefix(ev.Message.Model, "<") {
 					model = ev.Message.Model
 				}
 				u := ev.Message.Usage
 				in := u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
-				tok.Input += in
-				tok.Cached += u.CacheReadInputTokens
-				tok.Output += u.OutputTokens
-				tok.Total += in + u.OutputTokens
+				cur := TokenBucket{
+					Input:  in,
+					Cached: u.CacheReadInputTokens,
+					Output: u.OutputTokens,
+					Total:  in + u.OutputTokens,
+				}
+				key := ev.Message.ID
+				if key == "" {
+					anon++
+					key = fmt.Sprintf("anon-%d", anon)
+				}
+				if prev, ok := byMsg[key]; !ok {
+					byMsg[key] = cur
+					order = append(order, key)
+				} else if cur.Total >= prev.Total {
+					byMsg[key] = cur
+				}
 			}
 		}
-	next:
 		if err != nil {
 			break
 		}
+	}
+	for _, k := range order {
+		tok.add(byMsg[k])
 	}
 	if tok.Total > 0 {
 		tok.Sessions = 1
@@ -198,8 +268,9 @@ func scanLocalUsage(home string, days int) NodeUsage {
 			if err != nil || fi.ModTime().Before(cutoff) {
 				continue
 			}
-			m, t := scanCodexRolloutUsage(f)
-			addRec(fi.ModTime().Format("2006-01-02"), m, "codex", t)
+			for _, sl := range scanCodexRolloutBuckets(f, cutoff, fi.ModTime().Format("2006-01-02")) {
+				addRec(sl.day, sl.model, "codex", sl.tok)
+			}
 		}
 	}
 

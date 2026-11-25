@@ -1862,7 +1862,7 @@
     try {
       await sendSuper(text, e ? { entry: e.id, who: "Swag", text: e.text } : { entry: id, who: "Swag", text: "" }, false);
     } catch (err) {
-      toast(err.message, "attn");
+      delete grp.dataset.busy; grp.querySelectorAll("button").forEach((x) => { x.disabled = false; }); toast(err.message, "attn");
     }
   });
 
@@ -2545,8 +2545,8 @@
     if (view === "ext" && extCur?.startsWith("h:")) renderHistHead(extCur.slice(2));
   }
   const ago = (t) => {
-    const s = (Date.now() - new Date(t)) / 1000;
-    return s < 90 ? "刚刚" : s < 3600 ? Math.round(s / 60) + " 分钟前" : s < 86400 ? Math.round(s / 3600) + " 小时前" : Math.round(s / 86400) + " 天前";
+    const s = (!t || String(t).startsWith("0001-01-01")) ? NaN : (Date.now() - new Date(t)) / 1000;
+    return !Number.isFinite(s) || s < 0 ? "" : s < 90 ? "刚刚" : s < 3600 ? Math.round(s / 60) + " 分钟前" : s < 86400 ? Math.round(s / 3600) + " 小时前" : Math.round(s / 86400) + " 天前";
   };
   const histName = (h) => h.title || (h.name && !autoName(h.name) ? h.name : base(tilde(h.cwd)));
   const histOnline = (h) => !h.machine || (state.machines || []).some((m) => m.id === h.machine && m.online);
@@ -2647,9 +2647,10 @@
   setTimeout(syncArchived, 800);
   function renderSessions() {
     const many = (state.machines || []).length > 1;
+    const extAt = (e) => (e.updated && !String(e.updated).startsWith("0001-01-01") ? e.updated : e.started);
     const extRow = (e) => {
-      const open = e.live && e.status === "idle";
-      const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
+      const open = e.live && (!e.status || e.status === "idle" || e.status === "unknown");
+      const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(extAt(e))].filter(Boolean).join(" · ");
       const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : "";
       return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}" href="#/x/${encodeURIComponent(e.id)}">
         <span class="glyph">${GLYPHS[e.kind] || GLYPHS.agent}</span>
@@ -2666,7 +2667,7 @@
     // above). Another app's session that is only open (kept alive in the
     // background, nothing running) is listed under 最近 by its time, its dot
     // saying it is still open.
-    const going = (e) => e.live && e.status !== "idle" && e.status !== "unknown";
+    const going = (e) => e.live && !!e.status && e.status !== "idle" && e.status !== "unknown" && !archivedSet.has(e.id);
     const panes = state.agents.filter((a) => a.name !== ROUTER && a.status !== "blocked")
       .map((a) => ({ rank: RANK[a.status] ?? 3, done: a.status === "done", html: itemHTML(a), on: view === "pane" && a.pane_id === current }));
     const liveExt = ext.filter(going).map((e) => ({ rank: RANK[e.status] ?? 3, done: e.status === "done", html: extRow(e), on: view === "ext" && extCur === e.id }));
@@ -2680,7 +2681,7 @@
     // 最近: newest first; Swag's own sessions are reached from its conversation.
     const deckRan = (name) => name === ROUTER || sup.workers.some((w) => w.name === name);
     const allRecent = [
-      ...ext.filter((e) => !going(e)).map((e) => ({ id: e.id, t: new Date(e.updated || e.started), html: extRow(e) })),
+      ...ext.filter((e) => !going(e)).map((e) => ({ id: e.id, t: new Date(extAt(e) || 0), html: extRow(e) })),
       ...hist.filter((h) => !deckRan(h.name)).map((h) => ({ id: "h:" + h.id, t: new Date(h.ended), html: histRow(h) })),
     ].sort((x, y) => y.t - x.t);
     const recent = allRecent.filter((x) => !archivedSet.has(x.id));

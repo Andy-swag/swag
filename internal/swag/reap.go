@@ -57,6 +57,10 @@ func (sp *Super) workerCanReapLocked(w *Worker, now time.Time, minIdle time.Dura
 		return false
 	}
 	if minIdle <= 0 {
+		// Still protect workers that just launched (brief may not be queued yet).
+		if !w.CreatedAt.IsZero() && now.Sub(w.CreatedAt) < 90*time.Second {
+			return false
+		}
 		return true
 	}
 	since := w.IdleSince
@@ -122,7 +126,7 @@ func (sp *Super) reapIdleWorkers(ctx context.Context, now time.Time, minIdle tim
 
 		sp.mu.Lock()
 		if wk = sp.st.Workers[tg.name]; wk != nil && !wk.Ended {
-			wk.Ended, wk.Status = true, "gone"
+			wk.Ended, wk.Status, wk.PaneID = true, "gone", ""
 			for _, th := range sp.st.Threads {
 				th.Subscribers = remove(th.Subscribers, wk.Name)
 			}

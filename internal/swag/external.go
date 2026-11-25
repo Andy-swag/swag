@@ -136,6 +136,8 @@ func terminalApp(ps map[int]*proc, p *proc) (app string, inHerdr bool) {
 				app = "tmux"
 			case strings.HasPrefix(name, "code") || strings.Contains(name, "electron"):
 				app = "VS Code"
+			case name == "bootstrap-fork":
+				app = "IDE 终端"
 			case name == "iterm2":
 				app = "iTerm2"
 			}
@@ -254,6 +256,9 @@ func (s *Server) externalSessions() []*External {
 				e.Updated = fi.ModTime()
 			}
 			e.Title = firstUserLine(e.path, e.format)
+		}
+		if e.Updated.IsZero() && !e.Started.IsZero() {
+			e.Updated = e.Started
 		}
 		list = append(list, e)
 	}
@@ -774,12 +779,14 @@ func isDeckRollout(path, format string) bool {
 			}
 		}
 	}
-	deckRolloutCache.Lock()
-	if len(deckRolloutCache.m) > 2000 {
-		deckRolloutCache.m = map[string]bool{}
+	if found {
+		deckRolloutCache.Lock()
+		if len(deckRolloutCache.m) > 2000 {
+			deckRolloutCache.m = map[string]bool{}
+		}
+		deckRolloutCache.m[path] = isSwag
+		deckRolloutCache.Unlock()
 	}
-	deckRolloutCache.m[path] = isSwag
-	deckRolloutCache.Unlock()
 	return isSwag
 }
 

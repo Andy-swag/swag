@@ -536,7 +536,7 @@ func (sp *Super) tick(parent context.Context) {
 func fromHuman(list []*Trigger) []*Trigger {
 	var out []*Trigger
 	for _, t := range list {
-		if t.Source == "chat" {
+		if t.Source == "chat" || (t.Source == "system" && t.From == "recall") {
 			out = append(out, t)
 		}
 	}
@@ -1985,7 +1985,7 @@ func waitText(d time.Duration) string {
 func (sp *Super) retryRouter(wait time.Duration, msg string) {
 	time.Sleep(wait)
 	sp.mu.Lock()
-	busy := !sp.routerAskedAt.IsZero() || sp.routerLaunching
+	busy := !sp.routerAskedAt.IsZero() || sp.routerLaunching || sp.st.Settings.Paused || sp.handover != nil || sp.dream != nil
 	sp.mu.Unlock()
 	if busy {
 		return

@@ -82,7 +82,15 @@ func (sp *Super) checkHandover(ctx context.Context, live map[string]liveAgent, q
 	a, alive := live[routerName]
 	sp.mu.Lock()
 	h := sp.handover
-	if !alive || sp.dream != nil {
+	if !alive {
+		sp.routerUsage = ctxUsage{}
+		sp.mu.Unlock()
+		if h != nil {
+			sp.finishHandover(ctx, h)
+		}
+		return
+	}
+	if sp.dream != nil {
 		sp.routerUsage = ctxUsage{}
 		sp.mu.Unlock()
 		return
@@ -156,6 +164,7 @@ func (sp *Super) finishHandover(ctx context.Context, h *handover) {
 		Title: "Swag · 交接前的会话（" + h.at.Format("01-02 15:04") + "）",
 	}
 	sp.s.remember(e)
+	sp.PullRemoteRouterMemory(ctx, true)
 	if err := sp.RestartRouter(ctx); err != nil {
 		log.Printf("handover restart: %v", err)
 	}

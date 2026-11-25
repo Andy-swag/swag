@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -118,7 +119,9 @@ func (s *Server) runLarkCardConsumer(ctx context.Context, bin, hubBase string) e
 			stdinW.Close()
 		}
 	}()
+	stderrDone := make(chan struct{})
 	go func() {
+		defer close(stderrDone)
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
 			line := sc.Text()
@@ -137,6 +140,7 @@ func (s *Server) runLarkCardConsumer(ctx context.Context, bin, hubBase string) e
 		}
 		go s.handleLarkCardEvent(ctx, bin, hubBase, line)
 	}
+	<-stderrDone
 	err = cmd.Wait()
 	close(done)
 	return err
@@ -228,7 +232,7 @@ func (s *Server) forwardLarkSay(ctx context.Context, hubBase, re, text string) e
 		tok = c.Token
 	}
 	if base == "" || tok == "" {
-		return nil
+		return fmt.Errorf("missing hub base URL or node token")
 	}
 	b, _ := json.Marshal(map[string]any{"text": text, "re": re})
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -244,7 +248,11 @@ func (s *Server) forwardLarkSay(ctx context.Context, hubBase, re, text string) e
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("hub /api/super/say returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
 	return nil
 }
 
@@ -270,8 +278,10 @@ func (s *Server) handleLarkCardEvent(ctx context.Context, bin, hubBase, raw stri
 	}
 	larkCardSeenMu.Unlock()
 
+	delivered := false
 	if !s.node && s.sup != nil {
 		s.applyQuickReply(act.Re, act.Text)
+		delivered = true
 	} else if hubBase != "" && act.URL != "" {
 		if u, err := url.Parse(act.URL); err == nil && u.RawQuery != "" {
 			target := strings.TrimRight(hubBase, "/") + "/api/super/quick-reply?" + u.RawQuery
@@ -279,6 +289,10 @@ func (s *Server) handleLarkCardEvent(ctx context.Context, bin, hubBase, raw stri
 			req, _ := http.NewRequestWithContext(cctx, "GET", target, nil)
 			direct := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
 			if resp, err := direct.Do(req); err == nil {
+				delivered = resp.StatusCode < 300
+				if !delivered {
+					log.Printf("lark card callback forward HTTP %d", resp.StatusCode)
+				}
 				resp.Body.Close()
 			} else {
 				log.Printf("lark card callback forward failed: %v", err)
@@ -287,9 +301,11 @@ func (s *Server) handleLarkCardEvent(ctx context.Context, bin, hubBase, raw stri
 		}
 	} else if err := s.forwardLarkSay(ctx, hubBase, act.Re, act.Text); err != nil {
 		log.Printf("lark card custom reply forward failed: %v", err)
+	} else {
+		delivered = true
 	}
 
-	if act.Token != "" {
+	if delivered && act.Token != "" {
 		s.updateLarkCardConfirmed(ctx, bin, act.Token, act.Summary, act.Text)
 	}
 }

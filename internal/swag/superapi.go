@@ -586,7 +586,7 @@ func (s *Server) superStop(w http.ResponseWriter, r *http.Request) {
 		s.herdr.Call(r.Context(), "workspace.close", map[string]any{"workspace_id": wk.WorkspaceID}, nil)
 	}
 	sp.mu.Lock()
-	wk.Ended, wk.Status = true, "gone"
+	wk.Ended, wk.Status, wk.PaneID = true, "gone", ""
 	for _, th := range sp.st.Threads {
 		th.Subscribers = remove(th.Subscribers, wk.Name)
 	}
