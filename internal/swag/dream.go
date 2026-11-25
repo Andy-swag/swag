@@ -9,8 +9,48 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	dreamRetryMu     sync.Mutex
+	dreamNextTry     time.Time
+	dreamFailStreak  int
+)
+
+func dreamCanTry(now time.Time) bool {
+	dreamRetryMu.Lock()
+	defer dreamRetryMu.Unlock()
+	return !now.Before(dreamNextTry)
+}
+
+func dreamRecordSuccess() {
+	dreamRetryMu.Lock()
+	dreamNextTry = time.Time{}
+	dreamFailStreak = 0
+	dreamRetryMu.Unlock()
+}
+
+func dreamRecordFailure(now time.Time, nightly bool) (suppressAlert, giveUpTonight bool) {
+	dreamRetryMu.Lock()
+	defer dreamRetryMu.Unlock()
+	if !nightly {
+		return false, false
+	}
+	dreamFailStreak++
+	switch dreamFailStreak {
+	case 1:
+		dreamNextTry = now.Add(15 * time.Minute)
+		return false, false
+	case 2:
+		dreamNextTry = now.Add(45 * time.Minute)
+		return true, false
+	default:
+		dreamNextTry = now.Add(6 * time.Hour)
+		return true, true
+	}
+}
 
 // Dreaming: while Swag sleeps (nightly, or on demand) a separate session
 // reviews what happened since the last dream (the chat with the human and
@@ -108,6 +148,9 @@ func (sp *Super) checkDream(ctx context.Context, live map[string]liveAgent, queu
 		return
 	}
 	now := time.Now()
+	if !dreamCanTry(now) {
+		return
+	}
 	next := sp.nextDream(now)
 	if next.IsZero() || now.Before(next) || now.After(next.Add(3*time.Hour)) {
 		return
@@ -156,9 +199,15 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		defer cancel()
 		fail := func(err error) {
 			log.Printf("dream: %v", err)
+			suppress, giveUp := dreamRecordFailure(time.Now(), reason == "nightly")
+			if giveUp {
+				sp.setLastDream(time.Now())
+			}
 			sp.mu.Lock()
 			sp.dream = nil
-			sp.addEntryLocked("event", mainThread, "整理记忆没能开始："+err.Error(), "", "error")
+			if !suppress {
+				sp.addEntryLocked("event", mainThread, "整理记忆没能开始："+err.Error(), "", "error")
+			}
 			sp.mu.Unlock()
 		}
 		// Swag's current session ends here; its log is part of what gets reviewed.
@@ -206,7 +255,8 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				log.Printf("dream machine %s offline (falling back to hub)", dreamMachineWant)
 			}
 		}
-		if _, _, err := sp.s.startAgentWithProfile(bg, targetMachine, kinds[kind], dreamName, workDir, dreamLabel, args, dreamProfile); err != nil {
+		paneID, _, err := sp.s.startAgentWithProfile(bg, targetMachine, kinds[kind], dreamName, workDir, dreamLabel, args, dreamProfile)
+		if err != nil {
 			var he *HerdrError
 			if !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 				fail(err)
@@ -228,13 +278,25 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 			if err == nil {
 				break
 			}
+			if errors.As(err, &he) && he.Code == "agent_blocked" && paneID != "" && !time.Now().After(deadline) {
+				sp.dismissRoutineDreamDialog(bg, paneID, workDir)
+				if sleepCtx(bg, 2*time.Second) != nil {
+					fail(bg.Err())
+					return
+				}
+				continue
+			}
 			if !errors.As(err, &he) || (he.Code != "agent_not_ready" && he.Code != "agent_not_found") || time.Now().After(deadline) {
 				sp.closeWorkspaces(context.Background(), dreamLabel)
 				fail(err)
 				return
 			}
-			time.Sleep(2 * time.Second)
+			if sleepCtx(bg, 2*time.Second) != nil {
+				fail(bg.Err())
+				return
+			}
 		}
+		dreamRecordSuccess()
 		sp.mu.Lock()
 		if sp.dream != nil {
 			sp.dream.started = true
@@ -242,6 +304,25 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		sp.mu.Unlock()
 	}()
 	return nil
+}
+
+func (sp *Super) dismissRoutineDreamDialog(ctx context.Context, pane, workDir string) {
+	if pane == "" || sp.s == nil || sp.s.herdr == nil {
+		return
+	}
+	if res, err := sp.s.herdr.Read(ctx, pane, "recent_unwrapped", "text", 40); err == nil {
+		low := strings.ToLower(res.Text)
+		if strings.Contains(low, "update available") && strings.Contains(low, "skip") {
+			_ = sp.s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"Escape"}}, nil)
+			log.Printf("dream: skipped Codex update dialog on %s", pane)
+			return
+		}
+	}
+	if workDir != "" && sp.answerTrust(ctx, pane, workDir) {
+		log.Printf("dream: trusted working directory %s on %s", workDir, pane)
+		return
+	}
+	sp.trustOwnDir(ctx, pane)
 }
 
 func (sp *Super) driveDream(ctx context.Context, d *dreamRun, live map[string]liveAgent) {
@@ -256,7 +337,7 @@ func (sp *Super) driveDream(ctx context.Context, d *dreamRun, live map[string]li
 	}
 	a, alive := live[dreamName]
 	if alive && a.Status == "blocked" {
-		sp.trustOwnDir(ctx, a.Pane)
+		sp.dismissRoutineDreamDialog(ctx, a.Pane, "")
 		sp.mu.Lock()
 		if d.blockedAt.IsZero() {
 			d.blockedAt = time.Now()
@@ -300,6 +381,7 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	sp.closeWorkspaces(ctx, dreamLabel)
 	summary, skills, fixes, scripts := "", "", "", ""
 	if ok {
+		dreamRecordSuccess()
 		sp.setLastDream(time.Now())
 		journal := filepath.Join(sp.routerDir(), "dreams", journalName(d.at)+".md")
 		summary = dreamSummary(journal)

@@ -143,3 +143,31 @@ func TestDreamJournalParsesScriptsAndSummary(t *testing.T) {
 		t.Fatalf("unexpected scripts line: %q", got)
 	}
 }
+
+func TestDreamFailureBackoffPreventsAlertStorm(t *testing.T) {
+	dreamRecordSuccess()
+	t.Cleanup(dreamRecordSuccess)
+
+	base := time.Date(2026, 11, 25, 4, 0, 0, 0, time.Local)
+	if !dreamCanTry(base) {
+		t.Fatalf("expected dreamCanTry true initially")
+	}
+	sup1, give1 := dreamRecordFailure(base, true)
+	if sup1 || give1 {
+		t.Fatalf("1st failure should alert once and retry later, got suppress=%v giveUp=%v", sup1, give1)
+	}
+	if dreamCanTry(base.Add(5 * time.Minute)) {
+		t.Fatalf("expected cooldown to block retry 5m after 1st failure")
+	}
+	if !dreamCanTry(base.Add(16 * time.Minute)) {
+		t.Fatalf("expected retry allowed after 15m cooldown")
+	}
+	sup2, give2 := dreamRecordFailure(base.Add(16*time.Minute), true)
+	if !sup2 || give2 {
+		t.Fatalf("2nd failure should suppress repeat alert and back off, got suppress=%v giveUp=%v", sup2, give2)
+	}
+	sup3, give3 := dreamRecordFailure(base.Add(70*time.Minute), true)
+	if !sup3 || !give3 {
+		t.Fatalf("3rd failure should suppress alert and give up tonight, got suppress=%v giveUp=%v", sup3, give3)
+	}
+}

@@ -697,6 +697,18 @@ func (s *Server) startAgentWithProfile(ctx context.Context, machine, herdrKind, 
 			return paneID, wsID, err
 		}
 	}
+	if herdrKind == "codex" {
+		hasUpd := false
+		for _, a := range args {
+			if strings.Contains(a, "check_for_update_on_startup=") {
+				hasUpd = true
+				break
+			}
+		}
+		if !hasUpd {
+			args = append([]string{"-c", "check_for_update_on_startup=false"}, args...)
+		}
+	}
 	if herdrKind == "codex" && isPoolAuthProfile(authProfile) {
 		hasMP := false
 		for _, a := range args {
