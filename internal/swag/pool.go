@@ -65,11 +65,52 @@ type ProviderRuntime struct {
 }
 
 var (
-	poolMu      sync.Mutex
-	poolRuntime = map[string]*ProviderRuntime{}
+	poolMu         sync.Mutex
+	poolRuntime    = map[string]*ProviderRuntime{}
+	poolRuntimeDir string
 )
 
-func poolPath() string { return filepath.Join(swagDir(), "pool.json") }
+func poolPath() string      { return filepath.Join(swagDir(), "pool.json") }
+func poolStatsPath() string { return filepath.Join(swagDir(), "pool-stats.json") }
+
+// ensurePoolRuntimeLoadedLocked loads persisted per-provider counters for the
+// active swagDir() once so Hub restarts/upgrades never reset model pool stats.
+func ensurePoolRuntimeLoadedLocked() {
+	dir := swagDir()
+	if poolRuntimeDir == dir {
+		return
+	}
+	poolRuntimeDir = dir
+	poolRuntime = map[string]*ProviderRuntime{}
+	b, err := os.ReadFile(filepath.Join(dir, "pool-stats.json"))
+	if err != nil {
+		return
+	}
+	var saved map[string]*ProviderRuntime
+	if json.Unmarshal(b, &saved) == nil && saved != nil {
+		for k, v := range saved {
+			if k != "" && v != nil {
+				poolRuntime[k] = v
+			}
+		}
+	}
+}
+
+func savePoolRuntimeLocked() {
+	dir := swagDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	b, err := json.MarshalIndent(poolRuntime, "", "  ")
+	if err != nil {
+		return
+	}
+	p := filepath.Join(dir, "pool-stats.json")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
 
 func defaultPoolConfig() PoolConfig {
 	return PoolConfig{
@@ -155,6 +196,7 @@ func poolStatsSnapshot() map[string]ProviderRuntime {
 	cfg := loadPoolConfig()
 	poolMu.Lock()
 	defer poolMu.Unlock()
+	ensurePoolRuntimeLoadedLocked()
 	out := make(map[string]ProviderRuntime, len(poolRuntime)+len(cfg.Providers))
 	for _, p := range cfg.Providers {
 		if p.Enabled {
@@ -206,10 +248,12 @@ func recordPoolUsageTokens(id string, tail []byte) {
 	rt.InputTokens += inTok
 	rt.OutputTokens += outTok
 	rt.TotalTokens += tot
+	savePoolRuntimeLocked()
 	poolMu.Unlock()
 }
 
 func runtimeFor(id string) *ProviderRuntime {
+	ensurePoolRuntimeLoadedLocked()
 	r, ok := poolRuntime[id]
 	if !ok {
 		r = &ProviderRuntime{}
@@ -282,6 +326,7 @@ func pickPoolCandidates(cfg PoolConfig, requestedModel string) []PoolProvider {
 	}
 	now := time.Now()
 	poolMu.Lock()
+	ensurePoolRuntimeLoadedLocked()
 	var ready, cooling []PoolProvider
 	for _, p := range ordered {
 		if rt := poolRuntime[p.ID]; rt != nil && now.Before(rt.CooldownUntil) {
@@ -409,6 +454,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 			rt.Failovers++
 			rt.LastError = err.Error()
 			rt.CooldownUntil = time.Now().Add(time.Duration(max(p.CooldownSec, 60)) * time.Second)
+			savePoolRuntimeLocked()
 			poolMu.Unlock()
 			lastErr = p.ID + ": " + err.Error()
 			continue
@@ -423,6 +469,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 			rt.LastStatus = resp.StatusCode
 			rt.LastError = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, clip(oneLine(string(errBody)), 180))
 			rt.CooldownUntil = time.Now().Add(time.Duration(max(p.CooldownSec, 180)) * time.Second)
+			savePoolRuntimeLocked()
 			poolMu.Unlock()
 			lastCode = resp.StatusCode
 			lastErr = p.ID + " " + rt.LastError
@@ -438,6 +485,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 			rt.LastError = ""
 			rt.CooldownUntil = time.Time{}
 		}
+		savePoolRuntimeLocked()
 		poolMu.Unlock()
 
 		for k, vs := range resp.Header {
@@ -449,7 +497,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 		w.WriteHeader(resp.StatusCode)
 		var tail []byte
 		appendTail := func(chunk []byte) {
-			const maxTail = 8192
+			const maxTail = 16384
 			if len(chunk) >= maxTail {
 				tail = append(tail[:0], chunk[len(chunk)-maxTail:]...)
 				return
@@ -664,6 +712,7 @@ func (s *Server) superPoolResetCooldown(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	poolMu.Lock()
+	ensurePoolRuntimeLoadedLocked()
 	if body.ID == "" {
 		for _, rt := range poolRuntime {
 			rt.CooldownUntil = time.Time{}
@@ -673,6 +722,7 @@ func (s *Server) superPoolResetCooldown(w http.ResponseWriter, r *http.Request) 
 		rt.CooldownUntil = time.Time{}
 		rt.LastError = ""
 	}
+	savePoolRuntimeLocked()
 	poolMu.Unlock()
 	writeJSON(w, 200, maskPoolConfig(loadPoolConfig()))
 }
@@ -721,6 +771,7 @@ func poolHasReadyProvider(cfg PoolConfig, tier string) bool {
 	now := time.Now()
 	poolMu.Lock()
 	defer poolMu.Unlock()
+	ensurePoolRuntimeLoadedLocked()
 	for _, p := range cands {
 		if rt := poolRuntime[p.ID]; rt == nil || !now.Before(rt.CooldownUntil) {
 			return true

@@ -565,8 +565,10 @@ tidies memory/. Its journal is in dreams/.
   When a reply has no ` + "`--opt`" + ` buttons yet still needs the human to handle, review or answer
   (a todo for them, an open question, a report or issue awaiting sign-off), add ` + "`--check`" + `
   so it stays in their pending reminder; leave ` + "`--check`" + ` off for plain updates or closed items.
-- ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--kind K] [--model ID] [--effort E] [--thread T] [--name N] \"task brief\"`" + `
+- ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--role R] [--auth-profile P] [--kind K] [--model ID] [--effort E] [--thread T] [--name N] \"task brief\"`" + `
   starts a worker in the background and returns at once. Defaults: kind {{WKIND}}, cwd {{WCWD}}.
+  Use ` + "`--role`" + ` (e.g. a configured role name) or ` + "`--auth-profile`" + ` when a task matches a
+  defined role or model-pool profile (see memory/instructions.md).
   ` + "`{{BIN}} list`" + ` shows the connected computers. Use --machine when the human names a
   computer or the code lives there (cwd is then a path on that computer; "~" is its home).
   The brief is complete and self-contained: goal, context, constraints, what "done" means

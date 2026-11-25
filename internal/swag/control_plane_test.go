@@ -306,3 +306,34 @@ func TestTodosAndInboxAck(t *testing.T) {
 		t.Fatalf("unexpected inbox ack result: %d %+v", ackRec.Code, loadInboxAck())
 	}
 }
+
+func TestPoolRuntimeStatsPersistAcrossRestart(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	poolMu.Lock()
+	poolRuntimeDir = ""
+	poolRuntime = map[string]*ProviderRuntime{}
+	rt := runtimeFor("llmbox")
+	rt.Requests = 3
+	rt.Successes = 3
+	savePoolRuntimeLocked()
+	poolMu.Unlock()
+
+	recordPoolUsageTokens("llmbox", []byte(`{"usage":{"input_tokens":1200,"output_tokens":345,"total_tokens":1545}}`))
+
+	// Simulate Hub process restart by wiping in-memory state.
+	poolMu.Lock()
+	poolRuntimeDir = ""
+	poolRuntime = map[string]*ProviderRuntime{}
+	poolMu.Unlock()
+
+	snap := poolStatsSnapshot()
+	got, ok := snap["llmbox"]
+	if !ok {
+		t.Fatalf("expected llmbox stats after restart, got %+v", snap)
+	}
+	if got.Requests != 3 || got.Successes != 3 || got.InputTokens != 1200 || got.OutputTokens != 345 || got.TotalTokens != 1545 {
+		t.Fatalf("unexpected persisted pool stats: %+v", got)
+	}
+}
