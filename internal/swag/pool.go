@@ -419,7 +419,7 @@ func (s *Server) proxyPoolRequest(w http.ResponseWriter, r *http.Request, suffix
 	cfg := loadPoolConfig()
 	cands := pickPoolCandidates(cfg, requestedModel)
 	if len(cands) == 0 {
-		writeJSON(w, 503, map[string]any{"error": "模型池暂无已启用的 Provider，请在「自动化 → 模型池」启用并配置上游"})
+		writeJSON(w, 503, map[string]any{"error": "模型池暂无已启用的 Provider，请在左下角「设置 → 模型池」启用并配置上游"})
 		return
 	}
 

@@ -838,20 +838,24 @@
     return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
   }
 
-  function renderInbox(body, triggers, acked, activeWorkers, api, esc, toast, onRefresh, needReasons, onDispatch) {
+  function renderInbox(body, triggers, acked, activeWorkers, api, esc, toast, onRefresh, needReasons, onDispatch, threads) {
     const activeSearch = document.activeElement?.id === "pi-search";
     const items = (triggers || []).map((t) => ({ t, m: classifyInbox(t, acked || {}, activeWorkers || {}, needReasons || null) }));
     const needItems = items.filter((x) => x.m.needsYou);
     syncInboxBadges(needItems.length);
+    const threadList = Array.isArray(threads) ? threads : [];
 
     const matchTab = (x) => (inboxView === "need" ? x.m.needsYou : inboxView === "done" ? !x.m.needsYou : true);
     const q = inboxQuery.trim().toLowerCase();
-    const filtered = items.filter((x) => {
+    const filtered = inboxView === "threads" ? [] : items.filter((x) => {
       if (!matchTab(x)) return false;
       if (inboxCat !== "all" && x.m.cat !== inboxCat) return false;
       if (q && !(x.m.title + " " + x.t.text + " " + (x.t.from || "") + " " + x.m.catLabel).toLowerCase().includes(q)) return false;
       return true;
     });
+    const filteredThreads = inboxView === "threads"
+      ? threadList.filter((th) => !q || `${th.id || ""} ${(th.subscribers || []).join(" ")}`.toLowerCase().includes(q))
+      : [];
 
     const groups = new Map();
     for (const x of filtered) {
@@ -904,6 +908,20 @@
       ["hook", "Webhook"],
     ];
 
+    const threadsHTML = inboxView === "threads"
+      ? `<p class="panel-intro" style="margin:4px 0 12px">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Swag 派出的 agent 订阅线程后，后续事件直达它，不再经过 Swag。<code>chat:main</code> 始终由 Swag 自己处理。</p>
+        <div class="pi-list">${filteredThreads.length ? filteredThreads.map((th) => `<div class="pi-card">
+          <div class="pi-avatar pi-av-sys">线</div>
+          <div class="pi-body">
+            <div class="pi-top">
+              <div class="pi-title mono">${esc(th.id)} <span class="muted">→ ${esc((th.subscribers || []).length ? th.subscribers.join(", ") : "Swag")}</span></div>
+              <span class="pi-time">${esc(fmtClock(th.last_at))}</span>
+            </div>
+            <div class="pi-foot"><span class="pi-status"><span class="pi-dot pi-dot-done"></span>${(th.triggers || []).length} 条事件</span></div>
+          </div>
+        </div>`).join("") : `<div class="pool-empty">还没有活跃线程</div>`}</div>`
+      : "";
+
     const prevPos = activeSearch ? document.activeElement.selectionStart : null;
     body.innerHTML = `<div class="pi-wrap">
       <div class="pi-bar">
@@ -911,13 +929,14 @@
           <button type="button" class="pi-tab ${inboxView === "need" ? "on" : ""}" data-piv="need">需要你${needItems.length ? `<span class="cnt">${needItems.length}</span>` : ""}</button>
           <button type="button" class="pi-tab ${inboxView === "done" ? "on" : ""}" data-piv="done">已处理</button>
           <button type="button" class="pi-tab ${inboxView === "all" ? "on" : ""}" data-piv="all">全部 <span class="muted">${items.length}</span></button>
+          <button type="button" class="pi-tab ${inboxView === "threads" ? "on" : ""}" data-piv="threads">线程 <span class="muted">${threadList.length}</span></button>
         </div>
         <span class="grow"></span>
-        ${visibleNeed.length ? `<button type="button" class="btn small" id="pi-clear-all">${esc(clearLabel)}</button>` : ""}
+        ${inboxView !== "threads" && visibleNeed.length ? `<button type="button" class="btn small" id="pi-clear-all">${esc(clearLabel)}</button>` : ""}
       </div>
-      <input type="search" id="pi-search" class="pi-search" value="${esc(inboxQuery)}" placeholder="搜索标题、来源、内容…">
-      <div class="pi-chips">${cats.map(([k, l]) => `<button type="button" class="pi-chip ${inboxCat === k ? "on" : ""}" data-pic="${k}">${l}</button>`).join("")}</div>
-      ${groupsHTML || `<div class="pool-empty">${inboxView === "need" ? "当前筛选下没有需要你处理的告警 🎉" : "没有匹配的事件日志"}</div>`}
+      <input type="search" id="pi-search" class="pi-search" value="${esc(inboxQuery)}" placeholder="${inboxView === "threads" ? "搜索线程 ID、订阅者…" : "搜索标题、来源、内容…"}">
+      ${inboxView === "threads" ? "" : `<div class="pi-chips">${cats.map(([k, l]) => `<button type="button" class="pi-chip ${inboxCat === k ? "on" : ""}" data-pic="${k}">${l}</button>`).join("")}</div>`}
+      ${inboxView === "threads" ? threadsHTML : (groupsHTML || `<div class="pool-empty">${inboxView === "need" ? "当前筛选下没有需要你处理的告警 🎉" : "没有匹配的事件日志"}</div>`)}
     </div>`;
 
     if (activeSearch) {
@@ -926,7 +945,7 @@
     }
 
     const byId = new Map(items.map((x) => [x.t.id, x]));
-    const rerender = () => renderInbox(body, triggers, acked, activeWorkers, api, esc, toast, onRefresh, needReasons, onDispatch);
+    const rerender = () => renderInbox(body, triggers, acked, activeWorkers, api, esc, toast, onRefresh, needReasons, onDispatch, threadList);
     const wrap = body.querySelector(".pi-wrap");
     wrap.addEventListener("click", async (e) => {
       const vt = e.target.closest("[data-piv]");
@@ -1516,60 +1535,6 @@
       }
     });
   }
-
-  (function initAutoCfgMenu() {
-    const cfgLabels = { pool: "模型池", threads: "线程", hooks: "接入", settings: "设置" };
-    const wire = () => {
-      const shell = document.getElementById("auto-tabs");
-      const btn = document.getElementById("auto-cfg-btn");
-      const menu = document.getElementById("auto-cfg-menu");
-      if (!shell || !btn || !menu || btn._cfgWired) return;
-      btn._cfgWired = true;
-      const syncLabel = () => {
-        const active = menu.querySelector("button.on");
-        const tab = active?.dataset.tab || "";
-        btn.classList.toggle("on", !!tab);
-        btn.textContent = tab ? `配置 · ${cfgLabels[tab] || tab} ▾` : "配置 ▾";
-      };
-      const setOpen = (open) => {
-        menu.hidden = !open;
-        btn.setAttribute("aria-expanded", String(open));
-        if (open) {
-          const shellRect = shell.getBoundingClientRect();
-          const btnRect = btn.getBoundingClientRect();
-          const maxLeft = Math.max(8, shellRect.width - 150);
-          menu.style.left = Math.min(Math.max(8, btnRect.left - shellRect.left), maxLeft) + "px";
-        }
-      };
-      btn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        setOpen(menu.hidden);
-      });
-      menu.addEventListener("click", (ev) => {
-        if (ev.target.closest("button[data-tab]")) {
-          setOpen(false);
-          setTimeout(syncLabel, 0);
-        }
-      });
-      shell.addEventListener("click", (ev) => {
-        if (ev.target.closest(".tabs button[data-tab]")) {
-          setOpen(false);
-          setTimeout(syncLabel, 0);
-        }
-      });
-      document.addEventListener("click", (ev) => {
-        if (!menu.hidden && !menu.contains(ev.target) && ev.target !== btn) setOpen(false);
-      });
-      document.addEventListener("keydown", (ev) => {
-        if (ev.key === "Escape" && !menu.hidden) setOpen(false);
-      });
-      new MutationObserver(syncLabel).observe(menu, { attributes: true, subtree: true, attributeFilter: ["class"] });
-      syncLabel();
-    };
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
-    else wire();
-  })();
 
   window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton };
 })();

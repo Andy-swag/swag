@@ -95,7 +95,7 @@
       <a class="icon-btn" href="#/devices" title="设备与连接">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="10" rx="1.5"/><path d="M7 18h5M9.5 14v4"/><rect x="17" y="9" width="5" height="11" rx="1.2"/></svg>
       </a>
-      <a class="icon-btn" href="#/prefs" id="nav-prefs" title="偏好设置">
+      <a class="icon-btn" href="#/prefs" id="nav-prefs" title="设置">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </a>
       <button class="icon-btn" id="logout" title="退出">
@@ -194,21 +194,12 @@
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div class="d-title"><div class="d-name">自动化</div><div class="d-meta muted">Always-on：事件进来，Swag 决定谁去做</div></div>
       </header>
-      <div class="auto-tabs-shell" id="auto-tabs">
-        <div class="tabs">
-          <button data-tab="todos" class="on">待办 <span class="tab-badge blue" id="todo-badge" hidden></span></button>
-          <button data-tab="inbox">告警与日志 <span class="tab-badge" id="inbox-badge" hidden></span></button>
-          <button data-tab="timers">定时</button>
-          <button data-tab="memory">记忆</button>
-          <button data-tab="usage">用量</button>
-          <button type="button" class="auto-cfg-btn" id="auto-cfg-btn" aria-expanded="false">配置 ▾</button>
-        </div>
-        <div class="auto-cfg-menu" id="auto-cfg-menu" hidden>
-          <button data-tab="pool">模型池</button>
-          <button data-tab="threads">线程</button>
-          <button data-tab="hooks">接入</button>
-          <button data-tab="settings">设置</button>
-        </div>
+      <div class="tabs" id="auto-tabs">
+        <button data-tab="todos" class="on">待办 <span class="tab-badge blue" id="todo-badge" hidden></span></button>
+        <button data-tab="timers">定时</button>
+        <button data-tab="memory">记忆</button>
+        <button data-tab="usage">用量</button>
+        <button data-tab="inbox">告警与日志 <span class="tab-badge" id="inbox-badge" hidden></span></button>
       </div>
       <div class="auto-body" id="auto-body"></div>
     </section>
@@ -257,12 +248,18 @@
       </div>
     </section>
 
-    <!-- ── preferences: this device's look and habits ── -->
+    <!-- ── unified settings: browser prefs, Swag roles, model pool, webhooks ── -->
     <section class="view" id="v-prefs" hidden>
       <header class="d-head">
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <div class="d-title"><div class="d-name">偏好设置</div><div class="d-meta muted">只影响这台设备上的这个浏览器</div></div>
+        <div class="d-title"><div class="d-name">设置</div><div class="d-meta muted">界面偏好、Swag 角色与路由、模型池与外部接入</div></div>
       </header>
+      <div class="tabs" id="prefs-tabs">
+        <button data-ptab="general" class="on">界面偏好</button>
+        <button data-ptab="swag">Swag 与角色</button>
+        <button data-ptab="pool">模型池</button>
+        <button data-ptab="hooks">外部接入</button>
+      </div>
       <div class="auto-body" id="prefs-body"></div>
     </section>
 

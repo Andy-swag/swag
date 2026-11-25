@@ -792,7 +792,7 @@
     if (model) parts.push(esc(model.split("/").pop()) + (r.model ? "" : "（默认）"));
     if (r.effort) parts.push("思考 " + esc(EFFORT_LABEL[r.effort] || r.effort));
     el.innerHTML = parts.join(" · ") + (r.pending ? ` <button type="button" class="pending" data-act="router-restart" title="Swag 的模型设置改过了，点这里重启 Swag">重启后生效</button>` : "");
-    el.title = `Swag 自己用的模型${model ? "：" + model : ""}${r.effort ? "，思考强度 " + r.effort : ""}（自动化 → 设置 → Swag 自己）`;
+    el.title = `Swag 自己用的模型${model ? "：" + model : ""}${r.effort ? "，思考强度 " + r.effort : ""}（设置 → Swag 与角色）`;
   }
   // A worker's comings and goings: its spawn line shows where it stands, and
   // a dialog waiting on the human shows as a card below. Reports and errors stay.
@@ -1357,7 +1357,7 @@
     const cx = $("#router-ctx");
     cx.textContent = r.handover ? "正在交接记忆…" : r.alive && r.context ? `上下文 ${r.context}%` : "";
     cx.classList.toggle("warn", !!r.handover || (r.rotate_at > 0 && r.context >= r.rotate_at - 10));
-    cx.title = r.rotate_at > 0 ? `用到 ${r.rotate_at}% 时，Swag 会把要记住的事写进 memory/，然后换一个新会话` : "自动换会话已关闭（自动化 → 设置）";
+    cx.title = r.rotate_at > 0 ? `用到 ${r.rotate_at}% 时，Swag 会把要记住的事写进 memory/，然后换一个新会话` : "自动换会话已关闭（设置 → Swag 与角色）";
     renderRouterModel(r);
     $$('[data-act="pause"]').forEach((b) => b.textContent = sup.paused ? "恢复投递" : "暂停投递");
 
@@ -1889,7 +1889,8 @@
   }, () => targetNow().machine);
 
   // ───────────────────────────── automation view
-  let autoTab = store.get("autoTab", "todos");
+  const AUTO_TABS = new Set(["todos", "timers", "memory", "usage", "inbox"]);
+  let autoTab = AUTO_TABS.has(store.get("autoTab", "todos")) ? store.get("autoTab", "todos") : "todos";
   let autoTimer;
   $("#auto-tabs").addEventListener("click", (e) => {
     const t = e.target.closest("button")?.dataset.tab;
@@ -1917,7 +1918,7 @@
     if (restore) restoreSimpleScroll($("#auto-body"), restore);
     clearInterval(autoTimer);
     loadAuto(restore);
-    if (autoTab === "inbox" || autoTab === "threads") autoTimer = setInterval(() => loadAuto(), 4000);
+    if (autoTab === "inbox") autoTimer = setInterval(() => loadAuto(), 4000);
     if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(); }, 5000);
   }
 
@@ -1930,14 +1931,10 @@
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
     try {
-      if (tab === "inbox" || tab === "threads") {
+      if (tab === "inbox") {
         const r = await api("/api/super/triggers");
         if (stale()) return;
-        if (tab === "inbox" && window.SwagPanels?.renderInbox) {
-          window.SwagPanels.renderInbox(body, r.triggers || [], r.acked || {}, r.active_workers || {}, api, esc, toast, () => loadAuto(), r.need_reasons || null, (txt, re) => { location.hash = "#/swag"; sendSuper(txt, re); });
-        } else {
-          body.innerHTML = threadsHTML(r.threads || []);
-        }
+        window.SwagPanels?.renderInbox?.(body, r.triggers || [], r.acked || {}, r.active_workers || {}, api, esc, toast, () => loadAuto(), r.need_reasons || null, (txt, re) => { location.hash = "#/swag"; sendSuper(txt, re); }, r.threads || []);
         applyAfter();
       } else if (tab === "todos" && window.SwagPanels?.renderTodos) {
         await window.SwagPanels.renderTodos(body, api, esc, toast, (txt, re) => { location.hash = "#/swag"; sendSuper(txt, re); });
@@ -1960,25 +1957,13 @@
       } else if (tab === "usage" && window.SwagPanels) {
         await window.SwagPanels.renderUsage(body, api, esc, toast);
         if (!stale()) applyAfter();
-      } else if (tab === "pool" && window.SwagPanels) {
-        await window.SwagPanels.renderPool(body, api, esc, toast);
-        if (!stale()) applyAfter();
-      } else if (tab === "timers") {
+      } else {
         const r = await api("/api/super/timers");
         if (stale()) return;
         const endedOpen = !!body.querySelector("details[data-ended-timers][open]");
         body.innerHTML = timersHTML(r.timers || []);
         if (endedOpen) { const d = body.querySelector("details[data-ended-timers]"); if (d) d.open = true; }
         applyAfter();
-      } else {
-        const r = await api("/api/super/settings");
-        if (stale()) return;
-        body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
-        applyAfter();
-        if (tab !== "hooks") api("/api/super/lark?fresh").then((l) => {
-          const el = $("#lark-who");
-          if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`;
-        }).catch(() => {});
       }
     } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
   }
@@ -2043,14 +2028,6 @@
       ${r.dreams.length ? `<h4 class="mem-h">做梦日记</h4><div class="card">${r.dreams.map((d, i) => `<details class="mem-fold" ${i === 0 ? "open" : ""}><summary><span class="muted mono mem-name">${esc(d.name.replace(/\.md$/, ""))}</span><span class="grow mem-sub">${esc(firstLine(d.text, d.name))}</span></summary><div class="mem-body msg assistant">${md(d.text)}</div></details>`).join("")}</div>` : ""}
       ${done.length ? `<details class="mem-done" data-path="tasks/done/"><summary class="mem-h">已完成<span class="muted">${done.length} 件 · 做完或放弃的任务，不再先读</span></summary>
         <div class="card">${done.map((f) => card(f, { label: f.name.replace(/^tasks\/done\//, ""), crew: true })).join("")}</div></details>` : ""}`;
-  }
-
-  function threadsHTML(ths) {
-    return `<p class="panel-intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Swag 派出的 agent 订阅线程后，后续事件直达它，不再经过 Swag。chat:main 始终由 Swag 自己处理。</p>
-      <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
-        <span class="badge">${th.triggers?.length || 0}</span>
-        <div><div class="meta"><b>${esc(th.id)}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Swag</span>"}</div></div>
-        <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row">还没有线程</li>`}</ul></div>`;
   }
 
   // ───────────────────────────── timers: picked, not typed
@@ -2376,7 +2353,7 @@
     </form>`;
   }
 
-  $("#auto-body").addEventListener("submit", async (e) => {
+  for (const el of [$("#auto-body"), $("#prefs-body")]) el.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
     try {
@@ -2434,7 +2411,7 @@
     } catch (err) { toast(err.message, "attn"); }
   });
 
-  $("#auto-body").addEventListener("click", async (e) => {
+  for (const el of [$("#auto-body"), $("#prefs-body")]) el.addEventListener("click", async (e) => {
     const t = e.target.closest("button");
     if (!t) return;
     if (t.dataset.act === "mem-edit" || t.dataset.act === "mem-cancel") {
@@ -2914,16 +2891,33 @@
   });
   applyLook();
 
-  function renderPrefs(restore = null) {
-    const seg = (key, cur, opts) => `<div class="seg" data-pref="${key}">${opts.map(([v, label]) =>
-      `<button type="button" data-v="${v}" class="${v === cur ? "on" : ""}">${label}</button>`).join("")}</div>`;
+  const PREFS_TABS = new Set(["general", "swag", "pool", "hooks"]);
+  let prefsTab = PREFS_TABS.has(store.get("prefsTab", "general")) ? store.get("prefsTab", "general") : "general";
+  $("#prefs-tabs")?.addEventListener("click", (e) => {
+    const t = e.target.closest("button")?.dataset.ptab;
+    if (!t || t === prefsTab) return;
+    prefsTab = t; store.set("prefsTab", t); $("#prefs-body").scrollTop = 0; renderPrefs();
+  });
+  async function renderPrefs(restore = null) {
+    const body = $("#prefs-body"), tab = prefsTab, gen = (body._autoGen = (body._autoGen || 0) + 1);
+    const stale = () => view !== "prefs" || prefsTab !== tab || body._autoGen !== gen;
+    $$("#prefs-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.ptab === tab));
+    if (tab === "pool" && window.SwagPanels) { await window.SwagPanels.renderPool(body, api, esc, toast); if (!stale() && restore) restoreSimpleScroll(body, restore); return; }
+    if (tab === "swag" || tab === "hooks") {
+      try {
+        const r = await api("/api/super/settings"); if (stale()) return;
+        body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
+        if (restore) restoreSimpleScroll(body, restore);
+        if (tab === "swag") api("/api/super/lark?fresh").then((l) => { const el = $("#lark-who"); if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`; }).catch(() => {});
+      } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
+      return;
+    }
+    const seg = (key, cur, opts) => `<div class="seg" data-pref="${key}">${opts.map(([v, label]) => `<button type="button" data-v="${v}" class="${v === cur ? "on" : ""}">${label}</button>`).join("")}</div>`;
     const sw = (key, on) => `<button type="button" class="switch" role="switch" aria-checked="${on}" data-pref="${key}"></button>`;
     const row = (title, sub, ctl) => `<div class="pref"><div class="pl"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</div>${ctl}</div>`;
-    const perm = !("Notification" in window) ? "这个浏览器不支持通知（手机上通常要先添加到主屏幕）"
-      : Notification.permission === "denied" ? "浏览器已拒绝通知，需要在浏览器的网站设置里打开"
-      : "页面在后台时，agent 需要你确认或完成任务会弹通知";
+    const perm = !("Notification" in window) ? "这个浏览器不支持通知（手机上通常要先添加到主屏幕）" : Notification.permission === "denied" ? "浏览器已拒绝通知，需要在浏览器的网站设置里打开" : "页面在后台时，agent 需要你确认或完成任务会弹通知";
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-    $("#prefs-body").innerHTML = `<div class="prefs">
+    body.innerHTML = `<div class="prefs">
       <div class="card"><div class="card-h">外观</div>
         ${row("主题", "跟随系统时，设备切到深色模式这里也跟着变", seg("theme", prefs.theme(), [["system", '<span class="theme-swatch system"></span>跟随系统'], ["light", '<span class="theme-swatch light"></span>浅色'], ["dark", '<span class="theme-swatch dark"></span>深色']]))}
         ${row("对话文字", "", seg("text", prefs.text(), [["small", "小"], ["normal", "标准"], ["large", "大"]]))}
@@ -2936,13 +2930,11 @@
       <div class="card"><div class="card-h">通知</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
       </div>
-      <p class="panel-intro">Swag 本身的设置（它自己用哪个 agent、派活默认在哪台电脑、通知机器人）在 <a href="#/auto" data-auto-tab="settings">自动化 → 设置</a>；电脑和手机的连接在 <a href="#/devices">设备</a>。</p>
+      <p class="panel-intro">电脑和手机的连接管理在 <a href="#/devices">设备</a>。</p>
     </div>`;
-    if (restore) restoreSimpleScroll($("#prefs-body"), restore);
+    if (restore) restoreSimpleScroll(body, restore);
   }
   $("#prefs-body").addEventListener("click", async (e) => {
-    const link = e.target.closest("a[data-auto-tab]");
-    if (link) autoTab = link.dataset.autoTab;
     const b = e.target.closest(".seg[data-pref] button, button.switch[data-pref]");
     if (!b) return;
     if (b.classList.contains("switch")) {
