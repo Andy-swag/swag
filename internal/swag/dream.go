@@ -387,7 +387,7 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 		cancel()
 	}
 	sp.closeWorkspaces(ctx, dreamLabel)
-	summary, skills, fixes, scripts := "", "", "", ""
+	summary, skills, fixes, scripts, wikis := "", "", "", "", ""
 	if ok {
 		dreamRecordSuccess()
 		sp.setLastDream(time.Now())
@@ -397,7 +397,8 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 		skills = dreamLine(journal, dreamSkillsPrefix)
 		fixes = dreamLine(journal, dreamFixPrefix)
 		scripts = dreamLine(journal, dreamScriptsPrefix)
-		addDreamProposalTodos(jName, skills, fixes, scripts)
+		wikis = dreamLine(journal, dreamWikiPrefix)
+		addDreamProposalTodos(jName, skills, fixes, scripts, wikis)
 	} else if d.reason == "nightly" {
 		_, giveUp := dreamRecordFailure(time.Now(), true)
 		if giveUp {
@@ -420,15 +421,27 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	default:
 		sp.addEntryLocked("event", mainThread, "Swag 醒了，记忆整理好了", "", "info")
 	}
+	hasProposals := skills != "" || fixes != "" || scripts != "" || wikis != ""
+	if ok && summary != "" {
+		whenTag := d.at.Format("01-02 15:04")
+		sumText := "整理记忆完成（" + whenTag + "）：" + summary
+		if !hasProposals {
+			sumText += "（本次无新增 Skill / 脚本 / 文档提案）"
+		}
+		sp.addEntryReplyLocked("swag", mainThread, sumText, "", "", nil, nil, true)
+	}
 	if skills != "" {
-		// Yours to decide, so it is said to you, not left in the journal.
-		sp.addEntryLocked("swag", mainThread, "整理记忆时发现这几件事做熟了，可以做成 skill，以后哪个 agent 都能直接用："+skills+"。要做的话告诉我放在哪（你自己的 skills，还是某个项目的仓库）。", "", "")
+		// Yours to decide: emit with one-tap options so Feishu Card 2.0 delivers it even in quiet mode.
+		sp.addEntryReplyLocked("swag", mainThread, "整理记忆时发现这几件事做熟了，可以做成 skill，以后哪个 agent 都能直接用："+skills+"。要做的话选一下放在哪（放项目仓库的话再告诉我哪个仓库）：", "", "", nil, []string{"做成个人 skill", "放到项目仓库", "先不用"}, false)
 	}
 	if fixes != "" {
-		sp.addEntryLocked("swag", mainThread, "整理记忆时发现已有的 skill 有地方不好用："+fixes+"。要改的话说一声，我派人去改。", "", "")
+		sp.addEntryReplyLocked("swag", mainThread, "整理记忆时发现已有的 skill 有地方不好用："+fixes+"。要不要派人去修？", "", "", nil, []string{"派人去修", "先不用"}, false)
 	}
 	if scripts != "" {
-		sp.addEntryLocked("swag", mainThread, "整理记忆时发现这几个高频流程适合固化成脚本或流水线："+scripts+"。确认要落地的话说一声，我直接派人写成脚本并补单测。", "", "")
+		sp.addEntryReplyLocked("swag", mainThread, "整理记忆时发现这几个高频流程适合固化成脚本或流水线："+scripts+"。要不要派人固化并补单测？", "", "", nil, []string{"派人固化", "先不用"}, false)
+	}
+	if wikis != "" {
+		sp.addEntryReplyLocked("swag", mainThread, "整理记忆时发现这些文档/Wiki 值得同步更新："+wikis+"。要不要派人更新？", "", "", nil, []string{"派人更新", "先不用"}, false)
 	}
 	sp.mu.Unlock()
 	if syncMirror {
@@ -446,6 +459,9 @@ const dreamFixPrefix = "可改进 skill："
 
 // dreamScriptsPrefix starts the line naming repeated flows ripe for a script or pipeline.
 const dreamScriptsPrefix = "可固化脚本/流水线："
+
+// dreamWikiPrefix starts the line naming project docs or wikis worth updating.
+const dreamWikiPrefix = "可更新文档/Wiki："
 
 // journalName names one dream's journal: one file per run, so the hub reads
 // this run's summary, never an earlier one's from the same day.
@@ -494,7 +510,7 @@ func dreamSummary(path string) string {
 		return ""
 	}
 	for _, l := range strings.Split(string(b), "\n") {
-		if l = strings.TrimSpace(l); strings.HasPrefix(l, "#") || strings.HasPrefix(l, dreamSkillsPrefix) || strings.HasPrefix(l, dreamFixPrefix) || strings.HasPrefix(l, dreamScriptsPrefix) {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "#") || strings.HasPrefix(l, dreamSkillsPrefix) || strings.HasPrefix(l, dreamFixPrefix) || strings.HasPrefix(l, dreamScriptsPrefix) || strings.HasPrefix(l, dreamWikiPrefix) {
 			continue // the title and structured proposal lines, surfaced on their own
 		}
 		l = strings.TrimSpace(strings.TrimLeft(l, ">-* "))
@@ -640,6 +656,7 @@ Tidy memory/ and maintain verified engineering knowledge. Every session reads th
    - "可做成 skill：": mature how-tos used across multiple jobs that no skill covers yet, separated by 、 (e.g. "SQL 只读查表").
    - "可改进 skill：": existing skills that agents worked around, failed with, or fixed by hand, as "name（what to fix）", separated by 、.
    - "可固化脚本/流水线：": repeated multi-step command sequences, health/data checks, or deploy/eval routines worth turning into a reusable script or automated pipeline (as "name（target repo/path & 1-line scope）", separated by 、). Optionally record high-value candidates via ` + "`{{BIN}} todo add --source agent --title \"...\" --detail \"...\"`" + ` so the human can approve and dispatch them in one click.
+   - "可更新文档/Wiki：": project READMEs, team wikis, or review docs that fell behind today's verified changes and need human-approved updates (as "target（what to update）", separated by 、).
    Put any non-empty proposal lines right under the journal's first line; omit empty ones.
 6. Opt-in local workspace knowledge & scratch hygiene (memory/notes/dream-workspaces.md):
    - If memory/notes/dream-workspaces.md exists and lists local project workspaces present on this computer, maintain each listed workspace strictly within its declared scope:
@@ -648,7 +665,7 @@ Tidy memory/ and maintain verified engineering knowledge. Every session reads th
    - Hard safety redlines: NEVER edit or delete uncommitted source code, NEVER delete tracked repo files without approval, NEVER run git push or destructive git resets, and NEVER touch live production services during Dream. List every workspace doc updated or scratch artifact cleaned in the dream journal.
 7. Keep every explicit instruction from the human unless a later one overrides it (tightening wording is fine). memory/messages.md is written by the hub; read it as input only.
 
-Then write a new file dreams/{{DATE}}.md. Its first line: one concise sentence in Chinese summarizing what you learned, cleaned, and updated; the human sees it. Next, any non-empty proposal lines ("可做成 skill：" / "可改进 skill：" / "可固化脚本/流水线："). Then, in under 40 lines:
+Then write a new file dreams/{{DATE}}.md. Its first line: one concise sentence in Chinese summarizing what you learned, cleaned, and updated; the human sees it. Next, any non-empty proposal lines ("可做成 skill：" / "可改进 skill：" / "可固化脚本/流水线：" / "可更新文档/Wiki："). Then, in under 40 lines:
 - 新增经验与避坑
 - 清理的过时/错误信息与任务归档
 - 工作区文档更新与临时文件清理（如有）

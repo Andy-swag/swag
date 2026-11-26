@@ -175,23 +175,26 @@ func TestDreamProposalsAutoCreateTodos(t *testing.T) {
 	n := addDreamProposalTodos(
 		"2026-11-25-1041",
 		"SQL 巡检",
-		"deploy-flow（启动后立即通知）、harness（真卡预检）",
-		"单卡预检（scripts/bench.sh）",
+		"deploy-flow（启动后立即通知、补状态核验）、harness（真卡预检）",
+		"单卡预检（scripts/bench.sh）；镜像状态核对（scripts/check.sh）",
+		"项目 Wiki（补最新架构图）",
 	)
-	if n != 4 {
-		t.Fatalf("expected 4 proposal todos, got %d", n)
+	if n != 6 {
+		t.Fatalf("expected 6 proposal todos, got %d", n)
 	}
 	// Running again deduplicates by source + title.
-	addDreamProposalTodos("2026-11-25-1041", "SQL 巡检", "deploy-flow（启动后立即通知）", "")
+	addDreamProposalTodos("2026-11-25-1041", "SQL 巡检", "deploy-flow（启动后立即通知）", "", "")
 	got := loadTodos()
-	if len(got) != 4 {
-		t.Fatalf("expected 4 deduplicated todos, got %d: %+v", len(got), got)
+	if len(got) != 6 {
+		t.Fatalf("expected 6 deduplicated todos, got %d: %+v", len(got), got)
 	}
 	wantTitles := map[string]bool{
-		"沉淀 Skill：SQL 巡检":       true,
-		"改进 Skill：deploy-flow":   true,
-		"改进 Skill：harness":       true,
-		"固化脚本/流水线：单卡预检":          true,
+		"沉淀 Skill：SQL 巡检":     true,
+		"改进 Skill：deploy-flow": true,
+		"改进 Skill：harness":     true,
+		"固化脚本/流水线：单卡预检":        true,
+		"固化脚本/流水线：镜像状态核对":      true,
+		"更新文档/Wiki：项目 Wiki":    true,
 	}
 	for _, it := range got {
 		if it.Source != "agent" || !wantTitles[it.Title] {
@@ -461,5 +464,64 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 	}
 	if d := byURL["https://example.feishu.cn/docx/DocBench777"]; d.Source != "tasks/done/bench.md" {
 		t.Fatalf("unexpected task done item: %+v", d)
+	}
+}
+
+func TestFinishDreamQueuesInteractiveCardInQuietMode(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{
+		dir:  tmp,
+		subs: map[chan struct{}]bool{},
+		st: &State{
+			Settings: Settings{NotifyLark: true, NotifyLevel: "quiet"},
+			Threads:  map[string]*Thread{},
+		},
+	}
+	at := time.Date(2026, 11, 26, 4, 0, 0, 0, time.Local)
+	dreamsDir := filepath.Join(sp.routerDir(), "dreams")
+	if err := os.MkdirAll(dreamsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(dreamsDir, journalName(at)+".md")
+	body := strings.Join([]string{
+		"沉淀了最新验收与排障经验，压缩启动记忆至 2.8 KB。",
+		"可做成 skill：发布巡检",
+		"可改进 skill：deploy-flow（补全局门禁）",
+		"可固化脚本/流水线：双schema验收（scripts/verify.py）",
+		"可更新文档/Wiki：架构说明（补最新数据流）",
+		"",
+		"## 详情",
+	}, "\n")
+	if err := os.WriteFile(journal, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Directly exercise journal parsing & notification queueing in quiet mode.
+	summary := dreamSummary(journal)
+	skills := dreamLine(journal, dreamSkillsPrefix)
+	fixes := dreamLine(journal, dreamFixPrefix)
+	scripts := dreamLine(journal, dreamScriptsPrefix)
+	wikis := dreamLine(journal, dreamWikiPrefix)
+	if summary == "" || skills == "" || fixes == "" || scripts == "" || wikis == "" {
+		t.Fatalf("expected all 5 dream fields parsed: sum=%q sk=%q fx=%q sc=%q wk=%q", summary, skills, fixes, scripts, wikis)
+	}
+	sp.mu.Lock()
+	sp.addEntryReplyLocked("swag", mainThread, "整理记忆完成（04:00）："+summary, "", "", nil, nil, true)
+	sp.addEntryReplyLocked("swag", mainThread, skills, "", "", nil, []string{"做成个人 skill", "放到项目仓库", "先不用"}, false)
+	sp.addEntryReplyLocked("swag", mainThread, fixes, "", "", nil, []string{"派人去修", "先不用"}, false)
+	sp.addEntryReplyLocked("swag", mainThread, scripts, "", "", nil, []string{"派人固化", "先不用"}, false)
+	sp.addEntryReplyLocked("swag", mainThread, wikis, "", "", nil, []string{"派人更新", "先不用"}, false)
+	gotBuf := append([]notice(nil), sp.notifyBuf...)
+	sp.mu.Unlock()
+
+	if len(gotBuf) != 5 {
+		t.Fatalf("expected 5 coalesced notices in quiet mode (summary + 4 interactive proposals), got %d", len(gotBuf))
+	}
+	for i, n := range gotBuf {
+		if !n.needsYou() {
+			t.Fatalf("notice %d should trigger Feishu Card 2.0 in quiet mode: %+v", i, n)
+		}
 	}
 }

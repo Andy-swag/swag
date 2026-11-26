@@ -453,13 +453,46 @@ func splitDreamProposalItem(raw string) (name, note string) {
 	return raw, ""
 }
 
-func addDreamProposalTodos(journalDate, skills, fixes, scripts string) int {
+func splitDreamProposalList(raw string) []string {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	for _, r := range raw {
+		switch r {
+		case '(', '（':
+			depth++
+			cur.WriteRune(r)
+		case ')', '）':
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteRune(r)
+		case '、', '；', ';':
+			if depth == 0 {
+				if s := strings.TrimSpace(cur.String()); s != "" {
+					out = append(out, s)
+				}
+				cur.Reset()
+			} else {
+				cur.WriteRune(r)
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if s := strings.TrimSpace(cur.String()); s != "" {
+		out = append(out, s)
+	}
+	return out
+}
+
+func addDreamProposalTodos(journalDate, skills, fixes, scripts, wikis string) int {
 	added := 0
 	emit := func(prefix, raw, fallbackDetail string) {
 		if strings.TrimSpace(raw) == "" {
 			return
 		}
-		for _, part := range strings.Split(raw, "、") {
+		for _, part := range splitDreamProposalList(raw) {
 			name, note := splitDreamProposalItem(part)
 			if name == "" {
 				continue
@@ -477,6 +510,7 @@ func addDreamProposalTodos(journalDate, skills, fixes, scripts string) int {
 	emit("沉淀 Skill：", skills, "高频流程已成熟，可点「派给 Swag」指定保存位置并封装为 Skill")
 	emit("改进 Skill：", fixes, "已有 Skill 在实战中存在需要修正的痛点")
 	emit("固化脚本/流水线：", scripts, "高频重复流程建议固化为可复用脚本或流水线")
+	emit("更新文档/Wiki：", wikis, "项目文档或 Wiki 需要按最新验证结果同步更新")
 	return added
 }
 
