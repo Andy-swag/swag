@@ -2312,9 +2312,7 @@
           <label>默认 AK 凭据方案<input name="worker_auth_profile" class="mono" value="${esc(s.worker_auth_profile || "")}" placeholder="default（留空用目标机默认）" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
         </div>
       </section>
-
       <section class="card set-sec" id="roles-section"></section>
-
       <section class="card set-sec">
         <header><h4>机器派活池（Group）与外部会话做梦收录</h4><p>新加入的机器默认不进入派活池（observe），勾选「派活」后才允许 Router 与定时任务自动派发；勾选「外部会话纳入做梦」后，该机器桌面版/独立对话会参与夜间做梦提炼。</p></header>
         <div id="mach-policies">${machRows}</div>
