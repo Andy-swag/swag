@@ -1,11 +1,13 @@
 package swag
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +22,8 @@ type DeliverableItem struct {
 	TaskTitle    string    `json:"task_title,omitempty"`
 	RelatedTasks []string  `json:"related_tasks,omitempty"`
 	Scope        string    `json:"scope,omitempty"`
+	Week         string    `json:"week,omitempty"`
+	WeekLabel    string    `json:"week_label,omitempty"`
 	Text         string    `json:"text,omitempty"`
 	HasDoc       bool      `json:"has_doc"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -29,7 +33,68 @@ var (
 	feishuDocLinkRe = regexp.MustCompile(`https?://[^\s)）>"'\]]*(?:larkoffice\.com|feishu\.cn)/(?:docx|wiki|docs|sheets|base|slides)/[A-Za-z0-9_-]+`)
 	mdLinkDocRe     = regexp.MustCompile(`\[([^\]]{1,120})\]\((https?://[^\s)]*(?:larkoffice\.com|feishu\.cn)/(?:docx|wiki|docs|sheets|base|slides)/[A-Za-z0-9_-]+[^)]*)\)`)
 	doneTitleTrimRe = regexp.MustCompile(`\s*[（(]\s*(?:进行中|已完成|已归档)\s*[)）]\s*$`)
+	isoWeekKeyRe    = regexp.MustCompile(`\b(20\d{2})-W(0[1-9]|[1-4]\d|5[0-3])\b`)
+	ymdDateRe       = regexp.MustCompile(`\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b`)
 )
+
+func isoWeekStart(year, week int, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.Local
+	}
+	jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, loc)
+	wd := int(jan4.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	w1Mon := jan4.AddDate(0, 0, -(wd - 1))
+	return w1Mon.AddDate(0, 0, (week-1)*7)
+}
+
+func formatISOWeek(year, week int, loc *time.Location) (string, string) {
+	mon := isoWeekStart(year, week, loc)
+	sun := mon.AddDate(0, 0, 6)
+	key := fmt.Sprintf("%04d-W%02d", year, week)
+	label := fmt.Sprintf("W%02d (%02d/%02d–%02d/%02d)", week, mon.Month(), mon.Day(), sun.Month(), sun.Day())
+	return key, label
+}
+
+func isoWeekFromTime(t time.Time) (string, string) {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	lt := t.In(time.Local)
+	y, w := lt.ISOWeek()
+	return formatISOWeek(y, w, lt.Location())
+}
+
+func parseWeekFromText(text string, fallback time.Time) (key, label string, anchor time.Time, explicit bool) {
+	if fallback.IsZero() {
+		fallback = time.Now()
+	}
+	if m := isoWeekKeyRe.FindStringSubmatch(text); len(m) == 3 {
+		y, _ := strconv.Atoi(m[1])
+		w, _ := strconv.Atoi(m[2])
+		if y >= 2020 && w >= 1 && w <= 53 {
+			k, lbl := formatISOWeek(y, w, time.Local)
+			sun := isoWeekStart(y, w, time.Local).AddDate(0, 0, 6).Add(18 * time.Hour)
+			return k, lbl, sun, true
+		}
+	}
+	var best time.Time
+	for _, m := range ymdDateRe.FindAllStringSubmatch(text, -1) {
+		if dt, err := time.ParseInLocation("2006-01-02", m[0], time.Local); err == nil {
+			if dt.After(best) {
+				best = dt
+			}
+		}
+	}
+	if !best.IsZero() {
+		k, lbl := isoWeekFromTime(best)
+		return k, lbl, best.Add(18 * time.Hour), true
+	}
+	k, lbl := isoWeekFromTime(fallback)
+	return k, lbl, fallback, false
+}
 
 func feishuDocType(u string) string {
 	low := strings.ToLower(u)
@@ -81,6 +146,15 @@ func isWeeklyRollupMarked(text string) bool {
 		}
 	}
 	return false
+}
+
+func weeklyMarkerLine(text string) string {
+	for _, raw := range strings.Split(text, "\n") {
+		if isWeeklyRollupMarked(raw) {
+			return raw
+		}
+	}
+	return ""
 }
 
 func isExplicitReviewLine(line, linkTitle string) bool {
@@ -199,6 +273,16 @@ func extractMarkedDeliverables(text, fallbackTitle, source string, at time.Time)
 			if strings.Contains(line, "周总复盘") || strings.Contains(line, "周复盘") || strings.Contains(title, "周复盘") || strings.Contains(title, "周工作总复盘") {
 				dt = "周总复盘"
 			}
+			wk, wl, anchor, explicit := parseWeekFromText(line, at)
+			itemAt := at
+			if explicit {
+				modWk, _ := isoWeekFromTime(at)
+				if wk != modWk {
+					itemAt = anchor
+				}
+			} else {
+				wk, wl = "", ""
+			}
 			out = append(out, DeliverableItem{
 				Title:     title,
 				URL:       u,
@@ -206,8 +290,10 @@ func extractMarkedDeliverables(text, fallbackTitle, source string, at time.Time)
 				Source:    source,
 				Summary:   clip(cleanLine, 160),
 				Scope:     "doc",
+				Week:      wk,
+				WeekLabel: wl,
 				HasDoc:    true,
-				UpdatedAt: at,
+				UpdatedAt: itemAt,
 			})
 		}
 	}
@@ -221,8 +307,15 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 	for _, f := range sp.memFiles() {
 		if strings.HasPrefix(f.Name, "notes/weekly") && strings.HasSuffix(f.Name, ".md") {
 			for _, d := range extractMarkedDeliverables(f.Text, taskDoneTitle(f.Name, f.Text), f.Name, f.Mod) {
+				if d.Week == "" {
+					d.Week, d.WeekLabel = isoWeekFromTime(f.Mod)
+				}
 				d.DocType = "周总复盘"
 				if idx, ok := byURLIdx[d.URL]; ok {
+					if d.Week > out[idx].Week {
+						out[idx].Week = d.Week
+						out[idx].WeekLabel = d.WeekLabel
+					}
 					if d.UpdatedAt.After(out[idx].UpdatedAt) {
 						out[idx].UpdatedAt = d.UpdatedAt
 					}
@@ -244,6 +337,11 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 		tSummary := taskDoneSummary(f.Text)
 		tText := clip(strings.TrimSpace(f.Text), 2400)
 		slug := strings.TrimSuffix(filepath.Base(f.Name), ".md")
+		wkSrc := weeklyMarkerLine(f.Text)
+		if wkSrc == "" {
+			wkSrc = f.Text
+		}
+		tWeek, tWeekLabel, _, _ := parseWeekFromText(wkSrc, f.Mod)
 		docs := extractMarkedDeliverables(f.Text, tTitle, f.Name, f.Mod)
 		if len(docs) == 0 {
 			scope := "missing"
@@ -261,6 +359,8 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 				TaskTitle:    tTitle,
 				RelatedTasks: []string{slug},
 				Scope:        scope,
+				Week:         tWeek,
+				WeekLabel:    tWeekLabel,
 				Text:         tText,
 				HasDoc:       false,
 				UpdatedAt:    f.Mod,
@@ -268,18 +368,26 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 			continue
 		}
 		for _, d := range docs {
+			if d.Week == "" {
+				d.Week = tWeek
+				d.WeekLabel = tWeekLabel
+			}
 			if idx, ok := byURLIdx[d.URL]; ok {
 				out[idx].RelatedTasks = appendUniqueStr(out[idx].RelatedTasks, slug)
+				if d.Week > out[idx].Week {
+					out[idx].Week = d.Week
+					out[idx].WeekLabel = d.WeekLabel
+				}
 				if d.UpdatedAt.After(out[idx].UpdatedAt) {
 					out[idx].UpdatedAt = d.UpdatedAt
 				}
-				if out[idx].TaskFile == "" {
+				if out[idx].TaskFile == "" || len(tText) > len(out[idx].Text) {
 					out[idx].TaskFile = f.Name
 					out[idx].TaskTitle = tTitle
 					out[idx].Text = tText
-				}
-				if out[idx].Summary == "" && tSummary != "" {
-					out[idx].Summary = tSummary
+					if tSummary != "" {
+						out[idx].Summary = tSummary
+					}
 				}
 				continue
 			}
@@ -305,6 +413,9 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 			continue
 		}
 		for _, d := range extractMarkedDeliverables(e.Text, "", "对话汇报", e.At) {
+			if d.Week == "" {
+				d.Week, d.WeekLabel = isoWeekFromTime(e.At)
+			}
 			if idx, ok := byURLIdx[d.URL]; ok {
 				if d.UpdatedAt.After(out[idx].UpdatedAt) {
 					out[idx].UpdatedAt = d.UpdatedAt
@@ -331,18 +442,38 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 		}
 		return 3
 	}
-	sort.Slice(out, func(i, j int) bool {
-		ri, rj := scopeRank(out[i]), scopeRank(out[j])
-		if ri != rj {
-			return ri < rj
+	sortItems := func(xs []DeliverableItem) {
+		sort.Slice(xs, func(i, j int) bool {
+			if xs[i].Week != xs[j].Week {
+				return xs[i].Week > xs[j].Week
+			}
+			ri, rj := scopeRank(xs[i]), scopeRank(xs[j])
+			if ri != rj {
+				return ri < rj
+			}
+			if !xs[i].UpdatedAt.Equal(xs[j].UpdatedAt) {
+				return xs[i].UpdatedAt.After(xs[j].UpdatedAt)
+			}
+			return xs[i].Title < xs[j].Title
+		})
+	}
+	sortItems(out)
+	const maxDeliverables = 120
+	if len(out) > maxDeliverables {
+		var docs, rest []DeliverableItem
+		for _, it := range out {
+			if it.HasDoc {
+				docs = append(docs, it)
+			} else {
+				rest = append(rest, it)
+			}
 		}
-		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		if len(docs) >= maxDeliverables {
+			out = docs[:maxDeliverables]
+		} else {
+			out = append(docs, rest[:maxDeliverables-len(docs)]...)
+			sortItems(out)
 		}
-		return out[i].Title < out[j].Title
-	})
-	if len(out) > 50 {
-		out = out[:50]
 	}
 	return out
 }
@@ -370,6 +501,10 @@ func (s *Server) superDeliverableScope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	mod := time.Now()
+	if fi, err := os.Stat(p); err == nil {
+		mod = fi.ModTime()
+	}
 	var kept []string
 	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
 		if isWeeklyRollupMarked(line) {
@@ -378,7 +513,8 @@ func (s *Server) superDeliverableScope(w http.ResponseWriter, r *http.Request) {
 		kept = append(kept, line)
 	}
 	if body.Scope == "weekly" {
-		kept = append(kept, "", "- 复盘归属：周复盘")
+		wk, _, _, _ := parseWeekFromText(strings.Join(kept, "\n"), mod)
+		kept = append(kept, "", fmt.Sprintf("- 复盘归属：周复盘（%s）", wk))
 	}
 	text := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
 	if err := os.WriteFile(p, []byte(text), 0o600); err != nil {

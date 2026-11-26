@@ -1011,9 +1011,19 @@
   let todoFilter = "open";
   let todoSrc = "all";
   let docFilter = "all";
+  let docWeek = "latest";
   let todoQuery = "";
   let todoBatchMode = false;
   const todoSelected = new Set();
+
+  function isoWeekKey(dt = new Date()) {
+    const d = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+    const day = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - day);
+    const yStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const wk = Math.ceil((((d - yStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(wk).padStart(2, "0")}`;
+  }
 
   function openDispatchModal(items, esc, toast, onDispatch) {
     const list = (items || []).filter(Boolean);
@@ -1168,16 +1178,42 @@
         if (todoSrc !== "all" && t.source !== todoSrc) return false;
         return matchQ(t.title + " " + (t.detail || "") + " " + (t.source || ""));
       });
-      const docsWithURL = deliverables.filter((d) => !!d.url).length;
-      const docsWeekly = deliverables.filter((d) => !d.url && d.scope === "weekly").length;
-      const docsMissing = deliverables.filter((d) => !d.url && d.scope !== "weekly").length;
+      const curWeekKey = isoWeekKey(new Date());
+      const prevWeekKey = isoWeekKey(new Date(Date.now() - 7 * 86400000));
+      const weekMap = new Map();
+      for (const d of deliverables) {
+        const wk = d.week || "未分周";
+        if (!weekMap.has(wk)) weekMap.set(wk, { key: wk, label: d.week_label || wk, count: 0 });
+        weekMap.get(wk).count++;
+      }
+      const weekList = [...weekMap.values()].sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+      const prettyWeek = (w) => {
+        if (!w || w.key === "未分周") return "未分周";
+        if (w.key === curWeekKey) return `本周 · ${w.label}`;
+        if (w.key === prevWeekKey) return `上周 · ${w.label}`;
+        return w.label;
+      };
+      const activeWeek = docWeek === "all"
+        ? "all"
+        : (docWeek === "latest" || !weekMap.has(docWeek))
+          ? (weekList[0]?.key || "all")
+          : docWeek;
+      const weekScoped = activeWeek === "all"
+        ? deliverables
+        : deliverables.filter((d) => (d.week || "未分周") === activeWeek);
+      const docsWeeklyDoc = deliverables.filter((d) => !!d.url && d.doc_type === "周总复盘").length;
+      const scopedWeeklyDoc = weekScoped.filter((d) => !!d.url && d.doc_type === "周总复盘").length;
+      const docsSpecialDoc = weekScoped.filter((d) => !!d.url && d.doc_type !== "周总复盘").length;
+      const docsWeekly = weekScoped.filter((d) => !d.url && d.scope === "weekly").length;
+      const docsMissing = weekScoped.filter((d) => !d.url && d.scope !== "weekly").length;
       const showDocs = todoFilter === "docs"
-        ? deliverables.filter((d) => {
-          if (docFilter === "linked" && !d.url) return false;
+        ? weekScoped.filter((d) => {
+          if (docFilter === "weekly_doc" && !(d.url && d.doc_type === "周总复盘")) return false;
+          if (docFilter === "special" && !(d.url && d.doc_type !== "周总复盘")) return false;
           if (docFilter === "missing" && (d.url || d.scope === "weekly")) return false;
           if (docFilter === "weekly" && (d.url || d.scope !== "weekly")) return false;
           const relHay = (d.related_tasks || []).join(" ");
-          return matchQ(d.title + " " + (d.task_title || "") + " " + relHay + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || ""));
+          return matchQ(d.title + " " + (d.task_title || "") + " " + relHay + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || "") + " " + (d.week || ""));
         })
         : [];
 
@@ -1273,7 +1309,7 @@
         </div>`;
       }).join("");
 
-      const docsHTML = showDocs.map((d, idx) => {
+      const renderDocCard = (d, idx) => {
         const hasDoc = !!d.url;
         const isWeekly = !hasDoc && d.scope === "weekly";
         const isRollupDoc = hasDoc && d.doc_type === "周总复盘";
@@ -1299,11 +1335,12 @@
           : isWeekly
             ? `<span class="pi-tag">已归入周复盘</span>`
             : `<span class="pi-tag pi-pri-high">待补复盘</span>`;
+        const wkTag = activeWeek === "all" && d.week ? `<span class="pi-tag">${esc(d.week)}</span>` : "";
         return `<div class="pi-card ${isOpen ? "is-open" : ""}">
           <div class="pi-avatar ${avCls}">${avTxt}</div>
           <div class="pi-body">
             <div class="pi-top">
-              <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}${tagHTML}</div>
+              <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}${tagHTML}${wkTag}</div>
               <span class="pi-time">${esc(fmtClock(d.updated_at))}</span>
             </div>
             ${bodyTxt && bodyTxt !== d.title ? `<div class="pi-snippet">${renderRichSnippet(bodyTxt, esc)}</div>` : ""}
@@ -1322,18 +1359,40 @@
             </div>
           </div>
         </div>`;
-      }).join("");
+      };
+      let docsHTML = "";
+      if (activeWeek === "all" && weekList.length > 1) {
+        const grouped = new Map();
+        showDocs.forEach((d, idx) => {
+          const wk = d.week || "未分周";
+          if (!grouped.has(wk)) grouped.set(wk, []);
+          grouped.get(wk).push({ d, idx });
+        });
+        docsHTML = [...grouped.entries()].map(([wk, rows]) => {
+          const meta = weekMap.get(wk) || { key: wk, label: wk };
+          return `<details class="pi-group" open>
+            <summary><span>${esc(prettyWeek(meta))}</span><span class="muted">${rows.length} 项</span></summary>
+            ${rows.map(({ d, idx }) => renderDocCard(d, idx)).join("")}
+          </details>`;
+        }).join("");
+      } else {
+        docsHTML = showDocs.map((d, idx) => renderDocCard(d, idx)).join("");
+      }
 
       const openTotal = syncTodoBadge();
       const dispatchedTotal = todos.filter((t) => t.status === "dispatched").length;
       const doneTotal = todos.filter((t) => t.status === "done").length;
       const docsTotal = deliverables.length;
       const docChips = [
-        ["all", `全部 (${deliverables.length})`],
-        ["linked", `已有复盘 (${docsWithURL})`],
+        ["all", `全部 (${weekScoped.length})`],
+        ["weekly_doc", `周总复盘 (${activeWeek === "all" ? docsWeeklyDoc : scopedWeeklyDoc})`],
+        ["special", `专项复盘 (${docsSpecialDoc})`],
         ["missing", `待补复盘 (${docsMissing})`],
         ["weekly", `已归入周复盘 (${docsWeekly})`],
       ];
+      const weekBarHTML = weekList.length ? `<div class="pi-chips" style="margin-bottom:6px">${
+        weekList.map((w) => `<button type="button" class="pi-chip ${activeWeek === w.key ? "on" : ""}" data-tdw="${esc(w.key)}">${esc(prettyWeek(w))} (${w.count})</button>`).join("")
+      }<button type="button" class="pi-chip ${activeWeek === "all" ? "on" : ""}" data-tdw="all">全部周次 (${deliverables.length})</button></div>` : "";
       const srcChips = [
         ["all", "全部"],
         ["pending", `待审批 (${pending.length})`],
@@ -1371,9 +1430,9 @@
           <button type="button" class="btn primary small" id="td-add">+ 新建待办</button>
         </div>
         ${batchBarHTML}
-        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="${todoFilter === "docs" ? "搜索已完结任务、复盘文档、来源…" : "搜索待办标题、详情、来源…"}">
+        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="${todoFilter === "docs" ? "搜索已完结任务、复盘文档、周次、来源…" : "搜索待办标题、详情、来源…"}">
         ${todoFilter === "docs"
-          ? `<div class="pi-chips">${docChips.map(([k, l]) => `<button type="button" class="pi-chip ${docFilter === k ? "on" : ""}" data-tdd="${k}">${l}</button>`).join("")}</div>`
+          ? `${weekBarHTML}<div class="pi-chips">${docChips.map(([k, l]) => `<button type="button" class="pi-chip ${docFilter === k ? "on" : ""}" data-tdd="${k}">${l}</button>`).join("")}</div>`
           : `<div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>`}
         <div class="pi-list">
           ${todoFilter === "docs"
@@ -1441,7 +1500,14 @@
         const ts = e.target.closest("[data-tds]");
         if (ts) { todoSrc = ts.dataset.tds; paint(); return; }
         const td = e.target.closest("[data-tdd]");
-        if (td) { docFilter = td.dataset.tdd; paint(); return; }
+        if (td) {
+          docFilter = td.dataset.tdd;
+          if (docFilter === "weekly_doc" && weekList.length > 1) docWeek = "all";
+          paint();
+          return;
+        }
+        const tw = e.target.closest("[data-tdw]");
+        if (tw) { docWeek = tw.dataset.tdw; paint(); return; }
         const scBtn = e.target.closest("[data-td-doc-scope]");
         if (scBtn) {
           const tf = scBtn.dataset.tdDocFile;
@@ -1550,9 +1616,10 @@
           return;
         }
         if (e.target.closest("#td-copy-docs")) {
-          const md = showDocs.map((d, i) => d.url
+          const head = activeWeek !== "all" && weekMap.has(activeWeek) ? `## ${prettyWeek(weekMap.get(activeWeek))} 复盘清单\n` : "";
+          const md = head + showDocs.map((d, i) => d.url
             ? `${i + 1}. [${d.title}](${d.url})${d.summary ? ` — ${d.summary}` : ""}`
-            : `${i + 1}. ${d.title}（待补复盘）${d.summary ? ` — ${d.summary}` : ""}`).join("\n");
+            : `${i + 1}. ${d.title}（${d.scope === "weekly" ? "归入周复盘" : "待补复盘"}）${d.summary ? ` — ${d.summary}` : ""}`).join("\n");
           try { await navigator.clipboard.writeText(md); toast(`已复制 ${showDocs.length} 条任务复盘 Markdown 清单`); }
           catch { toast("复制失败，请手动复制", "attn"); }
           return;

@@ -490,7 +490,7 @@ func TestCollectDeliverablesListsDoneTasksAndIgnoresExternalInputLinks(t *testin
 		}
 	}
 
-	// Mark config-update as rolled into weekly review via API.
+	// Mark config-update as rolled into weekly review via API and verify explicit ISO week is frozen.
 	srv := &Server{sup: sp}
 	req := httptest.NewRequest("POST", "/api/super/deliverables/scope", bytes.NewReader([]byte(`{"task_file":"tasks/done/config-update.md","scope":"weekly"}`)))
 	rec := httptest.NewRecorder()
@@ -501,12 +501,64 @@ func TestCollectDeliverablesListsDoneTasksAndIgnoresExternalInputLinks(t *testin
 	after := sp.collectDeliverables()
 	foundWeekly := false
 	for _, d := range after {
-		if d.TaskFile == "tasks/done/config-update.md" && d.Scope == "weekly" && d.DocType == "已归入周复盘" {
+		if d.TaskFile == "tasks/done/config-update.md" && d.Scope == "weekly" && d.DocType == "已归入周复盘" && d.Week != "" {
 			foundWeekly = true
 		}
 	}
 	if !foundWeekly {
-		t.Fatalf("expected config-update to transition to weekly scope, got %+v", after)
+		t.Fatalf("expected config-update to transition to weekly scope with week key, got %+v", after)
+	}
+}
+
+func TestCollectDeliverablesMultiWeekNoPinningCollisionAndPrimarySummary(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{dir: tmp, st: &State{}}
+	doneDir := filepath.Join(sp.memDir(), "tasks", "done")
+	notesDir := filepath.Join(sp.memDir(), "notes")
+	if err := os.MkdirAll(doneDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(notesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Single weekly-reviews.md holding BOTH W48 and W49 summaries (same file mtime).
+	weeklyMD := strings.Join([]string{
+		"# 周工作总复盘归档",
+		"- 周总复盘：[本周工作总复盘（2026-11-24 至 11-26）](https://example.feishu.cn/docx/Weekly48)",
+		"- 周总复盘：[本周工作总复盘（2026-12-01 至 12-03）](https://example.feishu.cn/docx/Weekly49)",
+	}, "\n") + "\n"
+	_ = os.WriteFile(filepath.Join(notesDir, "weekly-reviews.md"), []byte(weeklyMD), 0o600)
+
+	// W49 special doc.
+	_ = os.WriteFile(filepath.Join(doneDir, "w49-release.md"), []byte("# 新版本发布\n- 2026-12-02 完成上线\n- 复盘文档：[W49 发布复盘](https://example.feishu.cn/docx/Spec49)\n"), 0o600)
+	// W48 merged pair: short alphabetically-first sub-task + longer main task sharing one URL.
+	_ = os.WriteFile(filepath.Join(doneDir, "a-sub-debug.md"), []byte("# 子排障\n- 2026-11-25 子排障结束\n- 复盘文档：[W48 主项目复盘](https://example.feishu.cn/docx/Spec48)\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(doneDir, "z-main-project.md"), []byte("# 核心主项目\n- 2026-11-26 经过完整三阶段验证与压测，全链路 100% 回归通过并完成正式上线。\n- 复盘文档：[W48 主项目复盘](https://example.feishu.cn/docx/Spec48)\n"), 0o600)
+
+	got := sp.collectDeliverables()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 items across W49 & W48, got %d: %+v", len(got), got)
+	}
+	wantURLs := []string{
+		"https://example.feishu.cn/docx/Weekly49",
+		"https://example.feishu.cn/docx/Spec49",
+		"https://example.feishu.cn/docx/Weekly48",
+		"https://example.feishu.cn/docx/Spec48",
+	}
+	for i, u := range wantURLs {
+		if got[i].URL != u {
+			t.Fatalf("order[%d] mismatch: want %s, got %s (week=%s type=%s)", i, u, got[i].URL, got[i].Week, got[i].DocType)
+		}
+	}
+	if got[0].Week != "2026-W49" || got[2].Week != "2026-W48" {
+		t.Fatalf("expected distinct ISO weeks parsed from single weekly-reviews.md, got %s and %s", got[0].Week, got[2].Week)
+	}
+	// Primary task file & summary must come from longer z-main-project.md, not a-sub-debug.md.
+	if got[3].TaskFile != "tasks/done/z-main-project.md" || !strings.Contains(got[3].Summary, "全链路 100% 回归通过") || len(got[3].RelatedTasks) != 2 {
+		t.Fatalf("expected longer primary task to win merged summary/file, got %+v", got[3])
 	}
 }
 
