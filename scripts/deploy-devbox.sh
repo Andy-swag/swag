@@ -12,7 +12,7 @@ OUT="$ROOT_DIR/dist/swag-linux-amd64"
 
 echo "==> [1/3] Building linux/amd64 ($VERSION)..."
 mkdir -p "$ROOT_DIR/dist"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X github.com/Andy-swag/swag/internal/swag.Version=$VERSION" -o "$OUT" .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$OUT" .
 
 echo "==> [2/3] Uploading binary to $HOST:~/.local/bin/swag ..."
 gzip -c "$OUT" | ssh "$HOST" 'mkdir -p ~/.local/bin && gunzip > ~/.local/bin/swag.new && chmod 755 ~/.local/bin/swag.new && mv -f ~/.local/bin/swag.new ~/.local/bin/swag'
