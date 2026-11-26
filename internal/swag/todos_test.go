@@ -446,29 +446,39 @@ func TestCollectDeliverablesListsDoneTasksAndIgnoresExternalInputLinks(t *testin
 	if err := os.MkdirAll(doneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Finished task WITH explicit review doc.
+	// Two finished tasks sharing ONE review doc URL -> merged into 1 card with both slugs in RelatedTasks.
 	_ = os.WriteFile(filepath.Join(doneDir, "bench.md"), []byte("# GPU 单卡预检（进行中）\n- 已完成全部回归\n- 复盘文档：[GPU 单卡预检复盘](https://example.feishu.cn/docx/DocBench777)\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(doneDir, "bench-fix.md"), []byte("# GPU 预检补丁\n- 补齐校验脚本\n- 复盘文档：[GPU 单卡预检复盘](https://example.feishu.cn/docx/DocBench777)\n"), 0o600)
 	// Finished task with ONLY an external input reference doc -> must surface as missing review doc (HasDoc=false, URL="").
 	_ = os.WriteFile(filepath.Join(doneDir, "config-update.md"), []byte("# 模型配置更新\n- 目标：依照飞书文档 https://example.feishu.cn/docx/ExternalInput111 更新配置\n- 已完成配置回读验收。\n"), 0o600)
+	// Weekly rollup index note -> surfaces first as 周总复盘.
+	notesDir := filepath.Join(sp.memDir(), "notes")
+	if err := os.MkdirAll(notesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(notesDir, "weekly-reviews.md"), []byte("# 周总复盘归档\n- 周总复盘：[本周工作总复盘](https://example.feishu.cn/docx/Weekly001)\n"), 0o600)
 	// Routine scheduled scan task -> must be skipped.
 	_ = os.WriteFile(filepath.Join(doneDir, "feishu-todo-1126-am.md"), []byte("# 早间盘点\n- 无新增\n"), 0o600)
 
 	got := sp.collectDeliverables()
-	if len(got) != 3 {
-		t.Fatalf("expected 3 items (1 linked task + 1 missing-doc task + 1 standalone chat review doc), got %d: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("expected 4 items (1 weekly rollup + 1 merged linked task + 1 missing-doc task + 1 standalone chat review doc), got %d: %+v", len(got), got)
+	}
+	if got[0].DocType != "周总复盘" || got[0].URL != "https://example.feishu.cn/docx/Weekly001" {
+		t.Fatalf("expected weekly rollup ranked first, got %+v", got[0])
 	}
 	byKey := map[string]DeliverableItem{}
 	for _, d := range got {
-		k := d.TaskFile
+		k := d.URL
 		if k == "" {
-			k = d.URL
+			k = d.TaskFile
 		}
 		byKey[k] = d
 	}
-	if d := byKey["tasks/done/bench.md"]; !d.HasDoc || d.URL != "https://example.feishu.cn/docx/DocBench777" || d.TaskTitle != "GPU 单卡预检" || d.Summary != "已完成全部回归" {
-		t.Fatalf("unexpected linked task deliverable: %+v", d)
+	if d := byKey["https://example.feishu.cn/docx/DocBench777"]; !d.HasDoc || len(d.RelatedTasks) != 2 {
+		t.Fatalf("expected bench + bench-fix merged into 1 card with 2 related tasks, got %+v", d)
 	}
-	if d := byKey["tasks/done/config-update.md"]; d.HasDoc || d.URL != "" || d.Summary != "已完成配置回读验收。" {
+	if d := byKey["tasks/done/config-update.md"]; d.HasDoc || d.URL != "" || d.Scope != "missing" || d.Summary != "已完成配置回读验收。" {
 		t.Fatalf("expected config-update to ignore external input doc and surface as missing review doc, got %+v", d)
 	}
 	if d := byKey["https://example.feishu.cn/docx/DocABC123"]; !d.HasDoc || d.Title != "模型推理接入复盘" {
@@ -478,6 +488,25 @@ func TestCollectDeliverablesListsDoneTasksAndIgnoresExternalInputLinks(t *testin
 		if strings.Contains(d.URL, "ExternalRef999") || strings.Contains(d.URL, "ExternalInput111") {
 			t.Fatalf("external reference doc leaked into deliverables: %+v", d)
 		}
+	}
+
+	// Mark config-update as rolled into weekly review via API.
+	srv := &Server{sup: sp}
+	req := httptest.NewRequest("POST", "/api/super/deliverables/scope", bytes.NewReader([]byte(`{"task_file":"tasks/done/config-update.md","scope":"weekly"}`)))
+	rec := httptest.NewRecorder()
+	srv.superDeliverableScope(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("scope update failed: %d %s", rec.Code, rec.Body.String())
+	}
+	after := sp.collectDeliverables()
+	foundWeekly := false
+	for _, d := range after {
+		if d.TaskFile == "tasks/done/config-update.md" && d.Scope == "weekly" && d.DocType == "已归入周复盘" {
+			foundWeekly = true
+		}
+	}
+	if !foundWeekly {
+		t.Fatalf("expected config-update to transition to weekly scope, got %+v", after)
 	}
 }
 

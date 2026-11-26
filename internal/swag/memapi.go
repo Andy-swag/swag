@@ -93,6 +93,11 @@ func (s *Server) superSaveMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+func (s *Server) superMemorySync(w http.ResponseWriter, r *http.Request) {
+	res := s.sup.SyncMemoryMirrors(r.Context())
+	writeJSON(w, 200, map[string]any{"ok": true, "results": res})
+}
+
 func (s *Server) superDream(w http.ResponseWriter, r *http.Request) {
 	if err := s.sup.StartDream(r.Context(), "manual"); err != nil {
 		writeJSON(w, 409, map[string]any{"error": err.Error()})

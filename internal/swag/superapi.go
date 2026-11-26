@@ -56,6 +56,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/todos", s.superTodoUpsert)
 	api("POST /api/super/todos/batch", s.superTodoBatch)
 	api("POST /api/super/todos/{id}", s.superTodoAction)
+	api("POST /api/super/deliverables/scope", s.superDeliverableScope)
 	api("POST /api/super/inbox/ack", s.superInboxAck)
 	api("POST /api/super/archive", s.superArchive)
 	api("GET /api/super/pool", s.superPoolGet)
@@ -879,11 +880,6 @@ func (s *Server) superDreamPin(w http.ResponseWriter, r *http.Request) {
 	sp.changed()
 	sp.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ok": true, "dream_pinned": out})
-}
-
-func (s *Server) superMemorySync(w http.ResponseWriter, r *http.Request) {
-	res := s.sup.SyncMemoryMirrors(r.Context())
-	writeJSON(w, 200, map[string]any{"ok": true, "results": res})
 }
 
 func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {

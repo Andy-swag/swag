@@ -1119,7 +1119,7 @@
     let todos = data.todos || [];
     const liveTasks = data.live_tasks || [];
     const pending = data.pending || [];
-    const deliverables = data.deliverables || [];
+    let deliverables = data.deliverables || [];
 
     const syncTodoBadge = () => {
       const openTodos = todos.filter((t) => !t.status || t.status === "open").length;
@@ -1137,6 +1137,7 @@
       try {
         const fresh = await api("/api/super/todos");
         todos = fresh.todos || [];
+        deliverables = fresh.deliverables || [];
         syncTodoBadge();
         paint();
       } catch {}
@@ -1168,12 +1169,15 @@
         return matchQ(t.title + " " + (t.detail || "") + " " + (t.source || ""));
       });
       const docsWithURL = deliverables.filter((d) => !!d.url).length;
-      const docsMissing = deliverables.length - docsWithURL;
+      const docsWeekly = deliverables.filter((d) => !d.url && d.scope === "weekly").length;
+      const docsMissing = deliverables.filter((d) => !d.url && d.scope !== "weekly").length;
       const showDocs = todoFilter === "docs"
         ? deliverables.filter((d) => {
           if (docFilter === "linked" && !d.url) return false;
-          if (docFilter === "missing" && d.url) return false;
-          return matchQ(d.title + " " + (d.task_title || "") + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || ""));
+          if (docFilter === "missing" && (d.url || d.scope === "weekly")) return false;
+          if (docFilter === "weekly" && (d.url || d.scope !== "weekly")) return false;
+          const relHay = (d.related_tasks || []).join(" ");
+          return matchQ(d.title + " " + (d.task_title || "") + " " + relHay + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || ""));
         })
         : [];
 
@@ -1271,6 +1275,8 @@
 
       const docsHTML = showDocs.map((d, idx) => {
         const hasDoc = !!d.url;
+        const isWeekly = !hasDoc && d.scope === "weekly";
+        const isRollupDoc = hasDoc && d.doc_type === "周总复盘";
         const expKey = "doc:" + (d.task_file || d.url || idx);
         const isOpen = inboxOpen.has(expKey);
         const bodyTxt = isOpen && d.text ? d.text : (d.summary || "");
@@ -1278,23 +1284,41 @@
         const genPrompt = d.task_file
           ? `请读取 memory/${d.task_file} 及相关验证证据，严格按 memory/notes/task-report-doc.md 规范为「${d.task_title || d.title}」创建一篇结构清晰、带对比表/可视化展示的飞书复盘文档并把链接发给我；创建后在 memory/${d.task_file} 末尾写回一行「复盘文档：[标题](文档链接)」。`
           : "";
+        const rels = Array.isArray(d.related_tasks) ? d.related_tasks.filter(Boolean) : [];
+        const footInfo = hasDoc
+          ? (rels.length > 1
+            ? `已合并 ${rels.length} 项任务：${rels.join(" · ")}`
+            : `${isRollupDoc ? "周复盘主文档" : "已复盘"} · ${d.task_file || d.source || "对话汇报"}`)
+          : isWeekly
+            ? `已归入周复盘 · ${d.task_file || d.source || ""}`
+            : `任务已归档 · ${d.task_file || d.source || ""}`;
+        const avCls = isRollupDoc ? "pi-av-feishu" : hasDoc ? "pi-av-doc" : isWeekly ? "pi-av-sys" : "pi-av-miss";
+        const avTxt = (isRollupDoc || isWeekly) ? "周" : hasDoc ? "文" : "完";
+        const tagHTML = hasDoc
+          ? `<span class="pi-tag">${esc(d.doc_type || "飞书文档")}</span>`
+          : isWeekly
+            ? `<span class="pi-tag">已归入周复盘</span>`
+            : `<span class="pi-tag pi-pri-high">待补复盘</span>`;
         return `<div class="pi-card ${isOpen ? "is-open" : ""}">
-          <div class="pi-avatar ${hasDoc ? "pi-av-doc" : "pi-av-miss"}">${hasDoc ? "文" : "完"}</div>
+          <div class="pi-avatar ${avCls}">${avTxt}</div>
           <div class="pi-body">
             <div class="pi-top">
-              <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}${hasDoc
-                ? `<span class="pi-tag">${esc(d.doc_type || "飞书文档")}</span>`
-                : `<span class="pi-tag pi-pri-high">待补复盘</span>`}</div>
+              <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}${tagHTML}</div>
               <span class="pi-time">${esc(fmtClock(d.updated_at))}</span>
             </div>
             ${bodyTxt && bodyTxt !== d.title ? `<div class="pi-snippet">${renderRichSnippet(bodyTxt, esc)}</div>` : ""}
             <div class="pi-foot">
-              <span class="pi-status"><span class="pi-dot ${hasDoc ? "pi-dot-done" : "pi-dot-need"}"></span>${hasDoc ? `已复盘 · ${esc(d.task_file || d.source || "对话汇报")}` : `任务已归档 · ${esc(d.task_file || d.source || "")}`}</span>
+              <span class="pi-status"><span class="pi-dot ${hasDoc || isWeekly ? "pi-dot-done" : "pi-dot-need"}"></span>${esc(footInfo)}</span>
               <span class="grow"></span>
               ${canExp ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-expand="${esc(expKey)}">${isOpen ? "收起" : "展开详情"}</button>` : ""}
+              ${!hasDoc && d.task_file
+                ? (isWeekly
+                  ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-doc-scope="missing" data-td-doc-file="${esc(d.task_file)}">撤回为待补</button>`
+                  : `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-doc-scope="weekly" data-td-doc-file="${esc(d.task_file)}">归入周复盘</button>`)
+                : ""}
               ${hasDoc
                 ? `<a class="btn small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(d.url)}" target="_blank" rel="noopener">打开飞书复盘 ↗</a>`
-                : (genPrompt ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-ask="${esc(genPrompt)}">补生成飞书复盘</button>` : "")}
+                : (genPrompt ? `<button type="button" class="btn ${isWeekly ? "ghost" : ""} small" style="height:24px;font-size:11.5px" data-td-ask="${esc(genPrompt)}">${isWeekly ? "仍生成专项" : "生成专项复盘"}</button>` : "")}
             </div>
           </div>
         </div>`;
@@ -1308,6 +1332,7 @@
         ["all", `全部 (${deliverables.length})`],
         ["linked", `已有复盘 (${docsWithURL})`],
         ["missing", `待补复盘 (${docsMissing})`],
+        ["weekly", `已归入周复盘 (${docsWeekly})`],
       ];
       const srcChips = [
         ["all", "全部"],
@@ -1417,6 +1442,23 @@
         if (ts) { todoSrc = ts.dataset.tds; paint(); return; }
         const td = e.target.closest("[data-tdd]");
         if (td) { docFilter = td.dataset.tdd; paint(); return; }
+        const scBtn = e.target.closest("[data-td-doc-scope]");
+        if (scBtn) {
+          const tf = scBtn.dataset.tdDocFile;
+          const sc = scBtn.dataset.tdDocScope;
+          deliverables = deliverables.map((d) => (d.task_file === tf && !d.url
+            ? { ...d, scope: sc, doc_type: sc === "weekly" ? "已归入周复盘" : "待补复盘" }
+            : d));
+          paint();
+          try {
+            await api("/api/super/deliverables/scope", { body: { task_file: tf, scope: sc } });
+            toast(sc === "weekly" ? "已归入周复盘" : "已撤回为待补复盘");
+          } catch (err) {
+            toast(err.message, "attn");
+            silentReload();
+          }
+          return;
+        }
         if (e.target.closest("#td-batch-toggle")) {
           todoBatchMode = !todoBatchMode;
           if (!todoBatchMode) todoSelected.clear();

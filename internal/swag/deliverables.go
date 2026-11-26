@@ -1,6 +1,8 @@
 package swag
 
 import (
+	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -9,16 +11,18 @@ import (
 )
 
 type DeliverableItem struct {
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	DocType   string    `json:"doc_type"`
-	Source    string    `json:"source"`
-	Summary   string    `json:"summary,omitempty"`
-	TaskFile  string    `json:"task_file,omitempty"`
-	TaskTitle string    `json:"task_title,omitempty"`
-	Text      string    `json:"text,omitempty"`
-	HasDoc    bool      `json:"has_doc"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Title        string    `json:"title"`
+	URL          string    `json:"url"`
+	DocType      string    `json:"doc_type"`
+	Source       string    `json:"source"`
+	Summary      string    `json:"summary,omitempty"`
+	TaskFile     string    `json:"task_file,omitempty"`
+	TaskTitle    string    `json:"task_title,omitempty"`
+	RelatedTasks []string  `json:"related_tasks,omitempty"`
+	Scope        string    `json:"scope,omitempty"`
+	Text         string    `json:"text,omitempty"`
+	HasDoc       bool      `json:"has_doc"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 var (
@@ -67,13 +71,25 @@ func isRoutineDoneTask(name string) bool {
 	return false
 }
 
+func isWeeklyRollupMarked(text string) bool {
+	for _, raw := range strings.Split(text, "\n") {
+		l := strings.TrimSpace(raw)
+		for _, kw := range []string{"复盘归属：周复盘", "复盘归属:周复盘", "复盘归属：无需单独复盘", "复盘归属:无需单独复盘", "无需单独复盘"} {
+			if strings.Contains(l, kw) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isExplicitReviewLine(line, linkTitle string) bool {
 	for _, neg := range []string{"目标：依照", "目标:依照", "目标：按", "参考文档", "原文档", "输入文档", "需求文档", "外部文档"} {
 		if strings.Contains(line, neg) {
 			return false
 		}
 	}
-	for _, kw := range []string{"复盘文档", "交付文档", "总结文档", "飞书复盘", "周复盘", "完结复盘", "复盘链接", "交付链接", "复盘报告"} {
+	for _, kw := range []string{"复盘文档", "交付文档", "总结文档", "飞书复盘", "周复盘", "周总复盘", "完结复盘", "复盘链接", "交付链接", "复盘报告"} {
 		if strings.Contains(line, kw) {
 			return true
 		}
@@ -110,7 +126,7 @@ func taskDoneSummary(text string) string {
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
-		if isExplicitReviewLine(l, "") && feishuDocLinkRe.MatchString(l) {
+		if (isExplicitReviewLine(l, "") && feishuDocLinkRe.MatchString(l)) || isWeeklyRollupMarked(l) {
 			continue
 		}
 		l = strings.TrimSpace(strings.TrimLeft(l, "-*•> "))
@@ -122,8 +138,19 @@ func taskDoneSummary(text string) string {
 	if len(bullets) == 0 {
 		return ""
 	}
-	// Done task logs are append-only, so the latest closing bullet best summarizes the outcome.
 	return clip(bullets[len(bullets)-1], 180)
+}
+
+func appendUniqueStr(xs []string, v string) []string {
+	if v == "" {
+		return xs
+	}
+	for _, x := range xs {
+		if x == v {
+			return xs
+		}
+	}
+	return append(xs, v)
 }
 
 func extractMarkedDeliverables(text, fallbackTitle, source string, at time.Time) []DeliverableItem {
@@ -168,12 +195,17 @@ func extractMarkedDeliverables(text, fallbackTitle, source string, at time.Time)
 			if title == "" {
 				title = feishuDocType(u)
 			}
+			dt := feishuDocType(u)
+			if strings.Contains(line, "周总复盘") || strings.Contains(line, "周复盘") || strings.Contains(title, "周复盘") || strings.Contains(title, "周工作总复盘") {
+				dt = "周总复盘"
+			}
 			out = append(out, DeliverableItem{
 				Title:     title,
 				URL:       u,
-				DocType:   feishuDocType(u),
+				DocType:   dt,
 				Source:    source,
 				Summary:   clip(cleanLine, 160),
+				Scope:     "doc",
 				HasDoc:    true,
 				UpdatedAt: at,
 			})
@@ -187,6 +219,21 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 	byURLIdx := map[string]int{}
 
 	for _, f := range sp.memFiles() {
+		if strings.HasPrefix(f.Name, "notes/weekly") && strings.HasSuffix(f.Name, ".md") {
+			for _, d := range extractMarkedDeliverables(f.Text, taskDoneTitle(f.Name, f.Text), f.Name, f.Mod) {
+				d.DocType = "周总复盘"
+				if idx, ok := byURLIdx[d.URL]; ok {
+					if d.UpdatedAt.After(out[idx].UpdatedAt) {
+						out[idx].UpdatedAt = d.UpdatedAt
+					}
+					out[idx].DocType = "周总复盘"
+					continue
+				}
+				byURLIdx[d.URL] = len(out)
+				out = append(out, d)
+			}
+			continue
+		}
 		if !strings.HasPrefix(f.Name, "tasks/done/") || isRoutineDoneTask(f.Name) {
 			continue
 		}
@@ -196,33 +243,52 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 		tTitle := taskDoneTitle(f.Name, f.Text)
 		tSummary := taskDoneSummary(f.Text)
 		tText := clip(strings.TrimSpace(f.Text), 2400)
+		slug := strings.TrimSuffix(filepath.Base(f.Name), ".md")
 		docs := extractMarkedDeliverables(f.Text, tTitle, f.Name, f.Mod)
 		if len(docs) == 0 {
+			scope := "missing"
+			docType := "待补复盘"
+			if isWeeklyRollupMarked(f.Text) {
+				scope = "weekly"
+				docType = "已归入周复盘"
+			}
 			out = append(out, DeliverableItem{
-				Title:     tTitle,
-				DocType:   "已完结任务",
-				Source:    f.Name,
-				Summary:   tSummary,
-				TaskFile:  f.Name,
-				TaskTitle: tTitle,
-				Text:      tText,
-				HasDoc:    false,
-				UpdatedAt: f.Mod,
+				Title:        tTitle,
+				DocType:      docType,
+				Source:       f.Name,
+				Summary:      tSummary,
+				TaskFile:     f.Name,
+				TaskTitle:    tTitle,
+				RelatedTasks: []string{slug},
+				Scope:        scope,
+				Text:         tText,
+				HasDoc:       false,
+				UpdatedAt:    f.Mod,
 			})
 			continue
 		}
 		for _, d := range docs {
-			d.TaskFile = f.Name
-			d.TaskTitle = tTitle
-			d.Text = tText
-			if tSummary != "" {
-				d.Summary = tSummary
-			}
 			if idx, ok := byURLIdx[d.URL]; ok {
+				out[idx].RelatedTasks = appendUniqueStr(out[idx].RelatedTasks, slug)
 				if d.UpdatedAt.After(out[idx].UpdatedAt) {
 					out[idx].UpdatedAt = d.UpdatedAt
 				}
+				if out[idx].TaskFile == "" {
+					out[idx].TaskFile = f.Name
+					out[idx].TaskTitle = tTitle
+					out[idx].Text = tText
+				}
+				if out[idx].Summary == "" && tSummary != "" {
+					out[idx].Summary = tSummary
+				}
 				continue
+			}
+			d.TaskFile = f.Name
+			d.TaskTitle = tTitle
+			d.RelatedTasks = []string{slug}
+			d.Text = tText
+			if tSummary != "" {
+				d.Summary = tSummary
 			}
 			byURLIdx[d.URL] = len(out)
 			out = append(out, d)
@@ -253,12 +319,25 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 		}
 	}
 
+	scopeRank := func(d DeliverableItem) int {
+		if d.DocType == "周总复盘" {
+			return 0
+		}
+		if d.HasDoc {
+			return 1
+		}
+		if d.Scope == "missing" {
+			return 2
+		}
+		return 3
+	}
 	sort.Slice(out, func(i, j int) bool {
+		ri, rj := scopeRank(out[i]), scopeRank(out[j])
+		if ri != rj {
+			return ri < rj
+		}
 		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
 			return out[i].UpdatedAt.After(out[j].UpdatedAt)
-		}
-		if out[i].HasDoc != out[j].HasDoc {
-			return out[i].HasDoc
 		}
 		return out[i].Title < out[j].Title
 	})
@@ -266,4 +345,46 @@ func (sp *Super) collectDeliverables() []DeliverableItem {
 		out = out[:50]
 	}
 	return out
+}
+
+func (s *Server) superDeliverableScope(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TaskFile string `json:"task_file"`
+		Scope    string `json:"scope"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(body.TaskFile))))
+	if !strings.HasPrefix(rel, "tasks/done/") || !strings.HasSuffix(rel, ".md") || strings.Contains(rel, "..") {
+		writeJSON(w, 400, map[string]any{"error": "仅支持操作 tasks/done/*.md"})
+		return
+	}
+	p := filepath.Join(s.sup.memDir(), filepath.FromSlash(rel))
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		s.sup.PullRemoteRouterMemory(r.Context(), true)
+		raw, err = os.ReadFile(p)
+		if err != nil {
+			writeJSON(w, 404, map[string]any{"error": "找不到归档任务文件"})
+			return
+		}
+	}
+	var kept []string
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if isWeeklyRollupMarked(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if body.Scope == "weekly" {
+		kept = append(kept, "", "- 复盘归属：周复盘")
+	}
+	text := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
+	if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+		fail(w, err)
+		return
+	}
+	s.sup.PushRemoteRouterMemoryFile(r.Context(), rel, text)
+	writeJSON(w, 200, map[string]any{"ok": true, "task_file": rel, "scope": body.Scope})
 }
