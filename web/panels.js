@@ -1010,6 +1010,7 @@
 
   let todoFilter = "open";
   let todoSrc = "all";
+  let docFilter = "all";
   let todoQuery = "";
   let todoBatchMode = false;
   const todoSelected = new Set();
@@ -1166,8 +1167,14 @@
         if (todoSrc !== "all" && t.source !== todoSrc) return false;
         return matchQ(t.title + " " + (t.detail || "") + " " + (t.source || ""));
       });
+      const docsWithURL = deliverables.filter((d) => !!d.url).length;
+      const docsMissing = deliverables.length - docsWithURL;
       const showDocs = todoFilter === "docs"
-        ? deliverables.filter((d) => matchQ(d.title + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || "")))
+        ? deliverables.filter((d) => {
+          if (docFilter === "linked" && !d.url) return false;
+          if (docFilter === "missing" && d.url) return false;
+          return matchQ(d.title + " " + (d.task_title || "") + " " + (d.summary || "") + " " + (d.source || "") + " " + (d.doc_type || ""));
+        })
         : [];
 
       const pendHTML = showPend.map((p) => {
@@ -1262,26 +1269,46 @@
         </div>`;
       }).join("");
 
-      const docsHTML = showDocs.map((d) => `<div class="pi-card">
-        <div class="pi-avatar pi-av-doc">文</div>
-        <div class="pi-body">
-          <div class="pi-top">
-            <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}<span class="pi-tag">${esc(d.doc_type || "飞书文档")}</span></div>
-            <span class="pi-time">${esc(fmtClock(d.updated_at))}</span>
+      const docsHTML = showDocs.map((d, idx) => {
+        const hasDoc = !!d.url;
+        const expKey = "doc:" + (d.task_file || d.url || idx);
+        const isOpen = inboxOpen.has(expKey);
+        const bodyTxt = isOpen && d.text ? d.text : (d.summary || "");
+        const canExp = !!(d.text && (d.text.length > 100 || d.text !== d.summary));
+        const genPrompt = d.task_file
+          ? `请读取 memory/${d.task_file} 及相关验证证据，严格按 memory/notes/task-report-doc.md 规范为「${d.task_title || d.title}」创建一篇结构清晰、带对比表/可视化展示的飞书复盘文档并把链接发给我；创建后在 memory/${d.task_file} 末尾写回一行「复盘文档：[标题](文档链接)」。`
+          : "";
+        return `<div class="pi-card ${isOpen ? "is-open" : ""}">
+          <div class="pi-avatar ${hasDoc ? "pi-av-doc" : "pi-av-miss"}">${hasDoc ? "文" : "完"}</div>
+          <div class="pi-body">
+            <div class="pi-top">
+              <div class="pi-title" title="${esc(d.title)}">${esc(d.title)}${hasDoc
+                ? `<span class="pi-tag">${esc(d.doc_type || "飞书文档")}</span>`
+                : `<span class="pi-tag pi-pri-high">待补复盘</span>`}</div>
+              <span class="pi-time">${esc(fmtClock(d.updated_at))}</span>
+            </div>
+            ${bodyTxt && bodyTxt !== d.title ? `<div class="pi-snippet">${renderRichSnippet(bodyTxt, esc)}</div>` : ""}
+            <div class="pi-foot">
+              <span class="pi-status"><span class="pi-dot ${hasDoc ? "pi-dot-done" : "pi-dot-need"}"></span>${hasDoc ? `已复盘 · ${esc(d.task_file || d.source || "对话汇报")}` : `任务已归档 · ${esc(d.task_file || d.source || "")}`}</span>
+              <span class="grow"></span>
+              ${canExp ? `<button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-td-expand="${esc(expKey)}">${isOpen ? "收起" : "展开详情"}</button>` : ""}
+              ${hasDoc
+                ? `<a class="btn small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(d.url)}" target="_blank" rel="noopener">打开飞书复盘 ↗</a>`
+                : (genPrompt ? `<button type="button" class="btn small" style="height:24px;font-size:11.5px" data-td-ask="${esc(genPrompt)}">补生成飞书复盘</button>` : "")}
+            </div>
           </div>
-          ${d.summary && d.summary !== d.title ? `<div class="pi-snippet">${esc(d.summary)}</div>` : ""}
-          <div class="pi-foot">
-            <span class="pi-status"><span class="pi-dot pi-dot-done"></span>来源：${esc(d.source || "对话汇报")}</span>
-            <span class="grow"></span>
-            <a class="btn small" style="height:24px;font-size:11.5px;text-decoration:none" href="${esc(d.url)}" target="_blank" rel="noopener">打开飞书文档 ↗</a>
-          </div>
-        </div>
-      </div>`).join("");
+        </div>`;
+      }).join("");
 
       const openTotal = syncTodoBadge();
       const dispatchedTotal = todos.filter((t) => t.status === "dispatched").length;
       const doneTotal = todos.filter((t) => t.status === "done").length;
       const docsTotal = deliverables.length;
+      const docChips = [
+        ["all", `全部 (${deliverables.length})`],
+        ["linked", `已有复盘 (${docsWithURL})`],
+        ["missing", `待补复盘 (${docsMissing})`],
+      ];
       const srcChips = [
         ["all", "全部"],
         ["pending", `待审批 (${pending.length})`],
@@ -1309,7 +1336,7 @@
             <button type="button" class="pi-tab ${todoFilter === "open" ? "on" : ""}" data-tdf="open">待处理${openTotal ? `<span class="cnt">${openTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "dispatched" ? "on" : ""}" data-tdf="dispatched">已派发${dispatchedTotal ? ` <span class="muted">${dispatchedTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "done" ? "on" : ""}" data-tdf="done">已完成${doneTotal ? ` <span class="muted">${doneTotal}</span>` : ""}</button>
-            <button type="button" class="pi-tab ${todoFilter === "docs" ? "on" : ""}" data-tdf="docs">复盘文档${docsTotal ? ` <span class="muted">${docsTotal}</span>` : ""}</button>
+            <button type="button" class="pi-tab ${todoFilter === "docs" ? "on" : ""}" data-tdf="docs">任务复盘${docsTotal ? ` <span class="muted">${docsTotal}</span>` : ""}</button>
             <button type="button" class="pi-tab ${todoFilter === "all" ? "on" : ""}" data-tdf="all">全部</button>
           </div>
           <span class="grow"></span>
@@ -1319,11 +1346,13 @@
           <button type="button" class="btn primary small" id="td-add">+ 新建待办</button>
         </div>
         ${batchBarHTML}
-        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="${todoFilter === "docs" ? "搜索复盘文档标题、来源…" : "搜索待办标题、详情、来源…"}">
-        ${todoFilter === "docs" ? "" : `<div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>`}
+        <input type="search" id="td-search" class="pi-search" value="${esc(todoQuery)}" placeholder="${todoFilter === "docs" ? "搜索已完结任务、复盘文档、来源…" : "搜索待办标题、详情、来源…"}">
+        ${todoFilter === "docs"
+          ? `<div class="pi-chips">${docChips.map(([k, l]) => `<button type="button" class="pi-chip ${docFilter === k ? "on" : ""}" data-tdd="${k}">${l}</button>`).join("")}</div>`
+          : `<div class="pi-chips">${srcChips.map(([k, l]) => `<button type="button" class="pi-chip ${todoSrc === k ? "on" : ""}" data-tds="${k}">${l}</button>`).join("")}</div>`}
         <div class="pi-list">
           ${todoFilter === "docs"
-            ? (docsHTML || `<div class="pool-empty">还没有提取到飞书复盘/交付文档链接（任务完结生成飞书文档后会自动收录）</div>`)
+            ? (docsHTML || `<div class="pool-empty">当前筛选下没有已完结任务或复盘文档</div>`)
             : `${pendHTML}${taskHTML}${todoHTML}${!(pendHTML || taskHTML || todoHTML) ? `<div class="pool-empty">当前筛选下没有待办事项 🎉</div>` : ""}`}
         </div>
       </div>`;
@@ -1386,6 +1415,8 @@
         if (tf) { todoFilter = tf.dataset.tdf; paint(); return; }
         const ts = e.target.closest("[data-tds]");
         if (ts) { todoSrc = ts.dataset.tds; paint(); return; }
+        const td = e.target.closest("[data-tdd]");
+        if (td) { docFilter = td.dataset.tdd; paint(); return; }
         if (e.target.closest("#td-batch-toggle")) {
           todoBatchMode = !todoBatchMode;
           if (!todoBatchMode) todoSelected.clear();
@@ -1477,8 +1508,10 @@
           return;
         }
         if (e.target.closest("#td-copy-docs")) {
-          const md = showDocs.map((d, i) => `${i + 1}. [${d.title}](${d.url})${d.source ? `（${d.source}）` : ""}`).join("\n");
-          try { await navigator.clipboard.writeText(md); toast(`已复制 ${showDocs.length} 条复盘文档 Markdown 清单`); }
+          const md = showDocs.map((d, i) => d.url
+            ? `${i + 1}. [${d.title}](${d.url})${d.summary ? ` — ${d.summary}` : ""}`
+            : `${i + 1}. ${d.title}（待补复盘）${d.summary ? ` — ${d.summary}` : ""}`).join("\n");
+          try { await navigator.clipboard.writeText(md); toast(`已复制 ${showDocs.length} 条任务复盘 Markdown 清单`); }
           catch { toast("复制失败，请手动复制", "attn"); }
           return;
         }

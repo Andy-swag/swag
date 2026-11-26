@@ -429,7 +429,7 @@ func TestSuperSayDeduplicatesRapidDoubleSubmit(t *testing.T) {
 	}
 }
 
-func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
+func TestCollectDeliverablesListsDoneTasksAndIgnoresExternalInputLinks(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SWAG_HOME", tmp)
 
@@ -437,7 +437,7 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 		dir: tmp,
 		st: &State{
 			Entries: []*Entry{
-				{ID: "e1", Role: "swag", At: time.Now(), Text: "已完成交付：[模型推理接入复盘](https://example.feishu.cn/docx/DocABC123?from=chat) 与知识库 https://example.feishu.cn/wiki/WikiXYZ999"},
+				{ID: "e1", Role: "swag", At: time.Now(), Text: "已完成交付：[模型推理接入复盘](https://example.feishu.cn/docx/DocABC123?from=chat)，参考外部 wiki https://example.feishu.cn/wiki/ExternalRef999"},
 				{ID: "e2", Role: "swag", At: time.Now().Add(time.Minute), Text: "复盘文档：https://example.feishu.cn/docx/DocABC123"},
 			},
 		},
@@ -446,24 +446,38 @@ func TestCollectDeliverablesExtractsAndDeduplicatesFeishuDocs(t *testing.T) {
 	if err := os.MkdirAll(doneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(doneDir, "bench.md"), []byte("# GPU 单卡预检\n复盘文档：https://example.feishu.cn/docx/DocBench777\n"), 0o600)
+	// Finished task WITH explicit review doc.
+	_ = os.WriteFile(filepath.Join(doneDir, "bench.md"), []byte("# GPU 单卡预检（进行中）\n- 已完成全部回归\n- 复盘文档：[GPU 单卡预检复盘](https://example.feishu.cn/docx/DocBench777)\n"), 0o600)
+	// Finished task with ONLY an external input reference doc -> must surface as missing review doc (HasDoc=false, URL="").
+	_ = os.WriteFile(filepath.Join(doneDir, "config-update.md"), []byte("# 模型配置更新\n- 目标：依照飞书文档 https://example.feishu.cn/docx/ExternalInput111 更新配置\n- 已完成配置回读验收。\n"), 0o600)
+	// Routine scheduled scan task -> must be skipped.
+	_ = os.WriteFile(filepath.Join(doneDir, "feishu-todo-1126-am.md"), []byte("# 早间盘点\n- 无新增\n"), 0o600)
 
 	got := sp.collectDeliverables()
 	if len(got) != 3 {
-		t.Fatalf("expected 3 deduplicated deliverables, got %d: %+v", len(got), got)
+		t.Fatalf("expected 3 items (1 linked task + 1 missing-doc task + 1 standalone chat review doc), got %d: %+v", len(got), got)
 	}
-	byURL := map[string]DeliverableItem{}
+	byKey := map[string]DeliverableItem{}
 	for _, d := range got {
-		byURL[d.URL] = d
+		k := d.TaskFile
+		if k == "" {
+			k = d.URL
+		}
+		byKey[k] = d
 	}
-	if d := byURL["https://example.feishu.cn/docx/DocABC123"]; d.Title != "模型推理接入复盘" || d.DocType != "飞书文档" {
-		t.Fatalf("unexpected docx item: %+v", d)
+	if d := byKey["tasks/done/bench.md"]; !d.HasDoc || d.URL != "https://example.feishu.cn/docx/DocBench777" || d.TaskTitle != "GPU 单卡预检" || d.Summary != "已完成全部回归" {
+		t.Fatalf("unexpected linked task deliverable: %+v", d)
 	}
-	if d := byURL["https://example.feishu.cn/wiki/WikiXYZ999"]; d.DocType != "知识库" {
-		t.Fatalf("unexpected wiki item: %+v", d)
+	if d := byKey["tasks/done/config-update.md"]; d.HasDoc || d.URL != "" || d.Summary != "已完成配置回读验收。" {
+		t.Fatalf("expected config-update to ignore external input doc and surface as missing review doc, got %+v", d)
 	}
-	if d := byURL["https://example.feishu.cn/docx/DocBench777"]; d.Source != "tasks/done/bench.md" {
-		t.Fatalf("unexpected task done item: %+v", d)
+	if d := byKey["https://example.feishu.cn/docx/DocABC123"]; !d.HasDoc || d.Title != "模型推理接入复盘" {
+		t.Fatalf("unexpected standalone chat review doc: %+v", d)
+	}
+	for _, d := range got {
+		if strings.Contains(d.URL, "ExternalRef999") || strings.Contains(d.URL, "ExternalInput111") {
+			t.Fatalf("external reference doc leaked into deliverables: %+v", d)
+		}
 	}
 }
 
