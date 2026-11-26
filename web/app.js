@@ -1913,17 +1913,24 @@
 
   function openAuto(restore = null) {
     memEditing = false;
-    $("#auto-body")._memSig = "";
+    const body = $("#auto-body");
+    body._memSig = "";
+    if (body._renderedTab !== autoTab) {
+      body._renderedTab = autoTab;
+      const hint = { memory: "正在读取 Swag 记忆与知识笔记…", timers: "正在读取定时任务…", inbox: "正在加载告警与日志…" }[autoTab];
+      if (hint) body.innerHTML = `<p class="panel-intro">${hint}</p>`;
+    }
     $$("#auto-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === autoTab));
-    if (restore) restoreSimpleScroll($("#auto-body"), restore);
+    if (restore) restoreSimpleScroll(body, restore);
     clearInterval(autoTimer);
     loadAuto(restore);
-    if (autoTab === "inbox") autoTimer = setInterval(() => loadAuto(), 4000);
-    if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(); }, 5000);
+    if (autoTab === "inbox") autoTimer = setInterval(() => loadAuto(null, true), 4000);
+    if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(null, true); }, 5000);
   }
-
-  async function loadAuto(restore = null) {
-    const body = $("#auto-body"), tab = autoTab, gen = (body._autoGen = (body._autoGen || 0) + 1);
+  async function loadAuto(restore = null, bgPoll = false) {
+    const body = $("#auto-body"), tab = autoTab;
+    if (bgPoll && body._autoBusy === tab) return;
+    const gen = (body._autoGen = (body._autoGen || 0) + 1); body._autoBusy = tab;
     const stale = () => view !== "auto" || autoTab !== tab || body._autoGen !== gen;
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     const applyAfter = () => {
@@ -1965,7 +1972,7 @@
         if (endedOpen) { const d = body.querySelector("details[data-ended-timers]"); if (d) d.open = true; }
         applyAfter();
       }
-    } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
+    } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; } finally { if (body._autoGen === gen) body._autoBusy = ""; }
   }
 
   // ───────────────────────────── memory: what Swag keeps between sessions
