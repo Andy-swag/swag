@@ -2190,10 +2190,10 @@
   // Fills a model picker and its effort picker from what that agent offers.
   async function fillModels(form, who) {
     const kindSel = form[who + "_kind"], modelSel = form[who + "_model"], effSel = form[who + "_effort"];
-    const machine = who === "worker" && form.worker_machine ? form.worker_machine.value : "";
+    const machine = form[who + "_machine"] ? form[who + "_machine"].value : "";
     const want = modelSel.dataset.value ?? modelSel.value, wantEff = effSel.dataset.value ?? effSel.value;
     modelSel.innerHTML = `<option value="">读取中…</option>`;
-    const info = await modelsFor(kindSel.value, machine);
+    const info = await modelsFor(kindSel.value || form.router_kind.value, machine);
     const list = [...(info.models || [])];
     if (want && !list.some((m) => m.id === want)) list.unshift({ id: want });
     const sub = (m) => [m.label && m.label !== m.id ? m.id : "", m.note && m.note !== m.id && !(m.label && m.note.startsWith(m.label)) ? m.note : ""].filter(Boolean).join(" · ");
@@ -2223,9 +2223,10 @@
   function bindSettings(form) {
     if (!form || form._bound) return;
     form._bound = true;
-    for (const who of ["router", "worker"]) {
+    for (const who of ["router", "worker", "dream"]) {
       fillModels(form, who);
       form[who + "_kind"].addEventListener("change", () => { form[who + "_model"].value = ""; form[who + "_effort"].value = ""; fillModels(form, who); });
+      if (who !== "worker") form[who + "_machine"]?.addEventListener("change", () => fillModels(form, who));
     }
     let dirSeq = 0, dirTimer;
     const browseWorkerCwd = async (fallbackHome = false) => {
@@ -2324,10 +2325,10 @@
           <label>上下文用到多少时换新会话<select name="rotate_pct" data-pick="compact" data-title="上下文用到多少时换新会话">${[50, 60, 70, 80, -1].map((p) => `<option value="${p}" ${(s.rotate_pct || 60) === p ? "selected" : ""}>${p < 0 ? "从不" : p + "%"}</option>`).join("")}</select><small>窗口大小按 agent 自己的设置算</small></label>
           <label>每晚做梦<select name="dream_at" data-pick="compact" data-title="每晚做梦">${["02:00", "04:00", "06:00", "off"].map((t) => `<option value="${t}" ${(s.dream_at || "04:00") === t ? "selected" : ""}>${t === "off" ? "不做" : t}</option>`).join("")}</select><small>当天没有新对话就跳过</small></label>
         </div>
-        <div class="set-grid three">
+        <div class="set-grid">
           <label>做梦运行机<select name="dream_machine" data-pick="compact" data-title="做梦运行机">${machSelOpts(s.dream_machine, "hub（默认）")}</select></label>
           <label>做梦 Agent<select name="dream_kind" data-pick="compact" data-title="做梦 Agent"><option value="">同 Router</option>${kindOpts(s.dream_kind)}</select></label>
-          <label>做梦模型<input name="dream_model" class="mono" value="${esc(s.dream_model || "")}" placeholder="默认" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
+          ${modelPick("dream", s.dream_model, s.dream_effort)}
         </div>
         <div class="set-grid">
           <label class="check span2"><input type="checkbox" name="sync_memory_mirror" ${s.sync_memory_mirror ? "checked" : ""}> 自动向所有在线机器同步只读记忆镜像（<code>~/.swag/memory-mirror/</code>）</label>
@@ -2400,7 +2401,7 @@
           worker_auth_profile: f.worker_auth_profile ? f.worker_auth_profile.value.trim() : (cur.worker_auth_profile || ""),
           dream_machine: f.dream_machine ? f.dream_machine.value : (cur.dream_machine || ""),
           dream_kind: f.dream_kind ? f.dream_kind.value : (cur.dream_kind || ""),
-          dream_model: f.dream_model ? f.dream_model.value.trim() : (cur.dream_model || ""),
+          dream_model: f.dream_model ? (f.dream_model.value === "__custom" ? "" : f.dream_model.value.trim()) : (cur.dream_model || ""), dream_effort: f.dream_effort ? f.dream_effort.value : (cur.dream_effort || ""),
           sync_memory_mirror: f.sync_memory_mirror ? f.sync_memory_mirror.checked : !!cur.sync_memory_mirror,
           lark_machine: f.lark_machine ? f.lark_machine.value : (cur.lark_machine || ""),
           machine_policies,

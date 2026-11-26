@@ -1694,6 +1694,7 @@
       const orig = isNew
         ? { name: "", description: "", group: "compute", cwd: "", kind: "codex", model: "", effort: "", auth_profile: "", ask_permissions: false }
         : (roles[key] || { name: key });
+      const knownProfiles = [...new Set(["swag-pool", ...Object.values(roles).map((r) => r?.auth_profile).filter(Boolean), orig.auth_profile].filter(Boolean))];
       const bg = document.createElement("div");
       bg.className = "pool-modal-bg";
       bg.innerHTML = `<div class="pool-modal" role="dialog" aria-modal="true">
@@ -1715,9 +1716,9 @@
             <div class="pool-sec-h"><span>引擎与模型</span></div>
             <div class="pool-form-grid">
               <label class="pool-field">Agent 引擎<select data-rf="kind">${[["codex", "Codex"], ["claude", "Claude"], ["antigravity", "Antigravity"]].map(([v, l]) => `<option value="${v}" ${(orig.kind || "codex") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-              <label class="pool-field">模型 / 档位<input data-rf="model" class="mono" value="${esc(orig.model || "")}" placeholder="留空默认，或填 tier-fast / tier-standard / tier-strong"></label>
-              <label class="pool-field">思考强度<select data-rf="effort">${[["", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"], ["xhigh", "极高"]].map(([v, l]) => `<option value="${v}" ${(orig.effort || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-              <label class="pool-field">凭据方案（Auth Profile）<input data-rf="auth_profile" class="mono" value="${esc(orig.auth_profile || "")}" placeholder="留空原生默认，或填 swag-pool"></label>
+              <label class="pool-field">模型 / 档位<select data-rf="model" class="mono"><option value="${esc(orig.model || "")}" selected>${esc(orig.model || "默认（读取中…）")}</option></select></label>
+              <label class="pool-field">思考强度<select data-rf="effort">${[["", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"], ["xhigh", "很高"], ["max", "最高"]].map(([v, l]) => `<option value="${v}" ${(orig.effort || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+              <label class="pool-field">凭据方案（Auth Profile）<select data-rf="auth_profile" class="mono"><option value="" ${!orig.auth_profile ? "selected" : ""}>原生默认（不走反代池）</option>${knownProfiles.map((p) => `<option value="${esc(p)}" ${orig.auth_profile === p ? "selected" : ""}>${esc(p === "swag-pool" ? "swag-pool（模型池反代）" : p)}</option>`).join("")}<option value="__custom">其他（手动输入）…</option></select></label>
             </div>
             <label class="check" style="margin-top:8px"><input type="checkbox" data-rf="ask_permissions" ${orig.ask_permissions ? "checked" : ""}> 启用高风险操作审批提醒（ask_permissions）</label>
           </div>
@@ -1729,6 +1730,44 @@
           <button type="button" class="btn primary small" id="rm-save">保存角色</button>
         </div>
       </div>`;
+      const kindSel = bg.querySelector("[data-rf=kind]");
+      const modelSel = bg.querySelector("[data-rf=model]");
+      const profSel = bg.querySelector("[data-rf=auth_profile]");
+      const loadRoleModels = async (wantVal) => {
+        const k = kindSel?.value || "codex";
+        const [mRes, qRes] = await Promise.all([
+          api("/api/models?kind=" + encodeURIComponent(k)).catch(() => ({ models: [] })),
+          api("/api/super/quota").catch(() => ({ pool: { tiers: [] } })),
+        ]);
+        if (!bg.isConnected) return;
+        const tiers = (qRes?.pool?.tiers || []).map((t) => ({ id: t.id, label: `${t.id}${t.label ? " · " + t.label : ""}` }));
+        const native = (mRes?.models || []).map((m) => ({ id: m.id, label: m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id }));
+        const seen = new Set();
+        const opts = [];
+        const add = (id, label) => { if (id && !seen.has(id)) { seen.add(id); opts.push({ id, label }); } };
+        tiers.forEach((t) => add(t.id, t.label));
+        native.forEach((m) => add(m.id, m.label));
+        if (wantVal && !seen.has(wantVal)) opts.unshift({ id: wantVal, label: wantVal });
+        modelSel.innerHTML = `<option value="" ${!wantVal ? "selected" : ""}>默认（跟随全局/原生）</option>`
+          + opts.map((o) => `<option value="${esc(o.id)}" ${o.id === wantVal ? "selected" : ""}>${esc(o.label)}</option>`).join("")
+          + `<option value="__custom">其他（手动输入）…</option>`;
+      };
+      loadRoleModels(orig.model || "");
+      kindSel?.addEventListener("change", () => loadRoleModels(modelSel?.value === "__custom" ? "" : (modelSel?.value || "")));
+      const bindCustomOpt = (sel, title, placeholder) => {
+        sel?.addEventListener("change", async () => {
+          if (sel.value !== "__custom") return;
+          const v = await openInputModal({ title, label: title, placeholder }, esc);
+          if (v) {
+            const opt = new Option(v, v, true, true);
+            sel.add(opt, sel.options.length - 1);
+          } else {
+            sel.value = "";
+          }
+        });
+      };
+      bindCustomOpt(modelSel, "手动输入模型名 / 档位", "如 gpt-6.2-astra 或 tier-standard");
+      bindCustomOpt(profSel, "手动输入凭据方案名", "如 swag-pool");
       const close = () => { document.removeEventListener("keydown", onKey); bg.remove(); };
       const onKey = (ev) => { if (ev.key === "Escape") close(); };
       document.addEventListener("keydown", onKey);
@@ -1752,9 +1791,9 @@
             group: val("group"),
             cwd: val("cwd"),
             kind: val("kind") || "codex",
-            model: val("model"),
+            model: val("model") === "__custom" ? "" : val("model"),
             effort: val("effort"),
-            auth_profile: val("auth_profile"),
+            auth_profile: val("auth_profile") === "__custom" ? "" : val("auth_profile"),
             ask_permissions: !!bg.querySelector("[data-rf=ask_permissions]")?.checked,
           };
           if (!rec.cwd) delete rec.cwd;
