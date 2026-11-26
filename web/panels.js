@@ -1678,5 +1678,132 @@
     });
   }
 
-  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton };
+  function mountRolesSection(box, initRoles, api, esc, toast) {
+    if (!box) return;
+    let roles = { ...(initRoles || {}) };
+
+    const persistRoles = async (nextRoles, msg) => {
+      const cur = (await api("/api/super/settings")).settings || {};
+      await api("/api/super/settings", { body: { settings: { ...cur, roles: nextRoles } } });
+      roles = { ...nextRoles };
+      paint();
+      toast(msg || "已保存角色配置");
+    };
+
+    const openRoleModal = (key, isNew = false) => {
+      const orig = isNew
+        ? { name: "", description: "", group: "compute", cwd: "", kind: "codex", model: "", effort: "", auth_profile: "", ask_permissions: false }
+        : (roles[key] || { name: key });
+      const bg = document.createElement("div");
+      bg.className = "pool-modal-bg";
+      bg.innerHTML = `<div class="pool-modal" role="dialog" aria-modal="true">
+        <div class="pool-modal-head">
+          <h3>${isNew ? "新建 Agent 角色" : `编辑角色 · ${esc(key)}`}</h3>
+          <button type="button" class="pool-ico-btn" data-rm-close title="关闭">✕</button>
+        </div>
+        <div class="pool-modal-body">
+          <div class="pool-sec">
+            <div class="pool-sec-h"><span>基础信息</span></div>
+            <div class="pool-form-grid">
+              <label class="pool-field">角色名（唯一标识）<input data-rf="name" class="mono" value="${esc(orig.name || key || "")}" placeholder="如 deploy-ops" ${isNew ? "" : "readonly"}></label>
+              <label class="pool-field">机器分组<select data-rf="group">${[["compute", "compute（算力机）"], ["hub", "hub（中控机）"], ["local", "local（本机）"], ["", "不限（跟默认）"]].map(([v, l]) => `<option value="${v}" ${(orig.group || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+            </div>
+            <label class="pool-field">职责描述（Swag Router 派活与展示用）<input data-rf="description" value="${esc(orig.description || "")}" placeholder="一句话说明该角色负责什么任务、优先用什么工具"></label>
+            <label class="pool-field">默认工作目录（可选）<input data-rf="cwd" class="mono" value="${esc(orig.cwd || "")}" placeholder="~/Projects/... 或绝对路径"></label>
+          </div>
+          <div class="pool-sec">
+            <div class="pool-sec-h"><span>引擎与模型</span></div>
+            <div class="pool-form-grid">
+              <label class="pool-field">Agent 引擎<select data-rf="kind">${[["codex", "Codex"], ["claude", "Claude"], ["antigravity", "Antigravity"]].map(([v, l]) => `<option value="${v}" ${(orig.kind || "codex") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+              <label class="pool-field">模型 / 档位<input data-rf="model" class="mono" value="${esc(orig.model || "")}" placeholder="留空默认，或填 tier-fast / tier-standard / tier-strong"></label>
+              <label class="pool-field">思考强度<select data-rf="effort">${[["", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"], ["xhigh", "极高"]].map(([v, l]) => `<option value="${v}" ${(orig.effort || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+              <label class="pool-field">凭据方案（Auth Profile）<input data-rf="auth_profile" class="mono" value="${esc(orig.auth_profile || "")}" placeholder="留空原生默认，或填 swag-pool"></label>
+            </div>
+            <label class="check" style="margin-top:8px"><input type="checkbox" data-rf="ask_permissions" ${orig.ask_permissions ? "checked" : ""}> 启用高风险操作审批提醒（ask_permissions）</label>
+          </div>
+        </div>
+        <div class="pool-modal-foot">
+          ${!isNew && key !== "router" ? `<button type="button" class="btn ghost small" id="rm-del" style="color:#ef4444">删除角色</button>` : ""}
+          <span class="grow"></span>
+          <button type="button" class="btn small" data-rm-close>取消</button>
+          <button type="button" class="btn primary small" id="rm-save">保存角色</button>
+        </div>
+      </div>`;
+      const close = () => { document.removeEventListener("keydown", onKey); bg.remove(); };
+      const onKey = (ev) => { if (ev.key === "Escape") close(); };
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(bg);
+      bg.addEventListener("click", async (ev) => {
+        if (ev.target === bg || ev.target.closest("[data-rm-close]")) { close(); return; }
+        if (ev.target.closest("#rm-del")) {
+          if (!(await openConfirmModal({ title: `删除角色「${key}」`, message: "删除后定时任务和派活不再使用该角色配置，确认删除？", confirmText: "确认删除", danger: true }, esc))) return;
+          const next = { ...roles }; delete next[key];
+          try { await persistRoles(next, `已删除角色 ${key}`); close(); } catch (err) { toast(err.message, "attn"); }
+          return;
+        }
+        if (ev.target.closest("#rm-save")) {
+          const val = (f) => bg.querySelector(`[data-rf=${f}]`)?.value?.trim() || "";
+          const name = isNew ? val("name") : key;
+          if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) { toast("角色名必填，仅支持字母、数字、点、横线和下划线", "attn"); return; }
+          const rec = {
+            ...(roles[name] || {}),
+            name,
+            description: val("description"),
+            group: val("group"),
+            cwd: val("cwd"),
+            kind: val("kind") || "codex",
+            model: val("model"),
+            effort: val("effort"),
+            auth_profile: val("auth_profile"),
+            ask_permissions: !!bg.querySelector("[data-rf=ask_permissions]")?.checked,
+          };
+          if (!rec.cwd) delete rec.cwd;
+          if (!rec.model) delete rec.model;
+          if (!rec.effort) delete rec.effort;
+          if (!rec.auth_profile) delete rec.auth_profile;
+          if (!rec.ask_permissions) delete rec.ask_permissions;
+          const btn = ev.target.closest("#rm-save");
+          btn.disabled = true;
+          try { await persistRoles({ ...roles, [name]: rec }, isNew ? `已新建角色 ${name}` : `已更新角色 ${name}`); close(); }
+          catch (err) { toast(err.message, "attn"); btn.disabled = false; }
+        }
+      });
+    };
+
+    const paint = () => {
+      const list = Object.entries(roles).sort(([a], [b]) => (a === "router" ? 1 : b === "router" ? -1 : a.localeCompare(b)));
+      const rows = list.map(([k, r]) => {
+        const tags = [
+          r.group ? `组: ${r.group}` : "",
+          r.kind || "codex",
+          r.model || "默认模型",
+          r.auth_profile ? `通道: ${r.auth_profile}` : "原生默认",
+          r.effort ? `思考: ${r.effort}` : "",
+          r.ask_permissions ? "高风险审批" : "",
+        ].filter(Boolean);
+        return `<div class="pi-card" style="padding:10px 12px;margin-bottom:8px">
+          <div class="pi-body">
+            <div class="pi-top">
+              <div class="pi-title"><span class="mono">${esc(k)}</span>${tags.map((t) => `<span class="pi-tag">${esc(t)}</span>`).join("")}</div>
+              <span style="display:inline-flex;gap:6px">
+                <button type="button" class="btn ghost small" style="height:24px;font-size:11.5px" data-role-edit="${esc(k)}">编辑</button>
+              </span>
+            </div>
+            ${r.description ? `<div class="pi-snippet" style="-webkit-line-clamp:3">${esc(r.description)}</div>` : ""}
+            ${r.cwd ? `<div class="muted mono" style="font-size:11.5px;margin-top:4px">目录：${esc(r.cwd)}</div>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+      box.innerHTML = `<header style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div><h4>Agent 角色清单（${list.length}）</h4><p>Swag 派活和定时任务可直接按 <code>--role 角色名</code> 自动路由到对应机器分组、目录与模型档位；角色行为说明位于「自动化 → 记忆 → notes/agents.md」。</p></div>
+        <button type="button" class="btn small" id="role-add-btn" style="flex:none">+ 新建角色</button>
+      </header>
+      <div style="margin-top:10px">${rows || `<div class="pool-empty">还没有定义 Agent 角色</div>`}</div>`;
+      box.querySelector("#role-add-btn")?.addEventListener("click", () => openRoleModal("", true));
+      box.querySelectorAll("[data-role-edit]").forEach((b) => b.addEventListener("click", () => openRoleModal(b.dataset.roleEdit, false)));
+    };
+    paint();
+  }
+
+  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton, mountRolesSection };
 })();

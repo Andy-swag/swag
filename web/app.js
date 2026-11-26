@@ -2313,6 +2313,8 @@
         </div>
       </section>
 
+      <section class="card set-sec" id="roles-section"></section>
+
       <section class="card set-sec">
         <header><h4>机器派活池（Group）与外部会话做梦收录</h4><p>新加入的机器默认不进入派活池（observe），勾选「派活」后才允许 Router 与定时任务自动派发；勾选「外部会话纳入做梦」后，该机器桌面版/独立对话会参与夜间做梦提炼。</p></header>
         <div id="mach-policies">${machRows}</div>
@@ -2915,7 +2917,7 @@
         const r = await api("/api/super/settings"); if (stale()) return;
         body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
         if (restore) restoreSimpleScroll(body, restore);
-        if (tab === "swag") api("/api/super/lark?fresh").then((l) => { const el = $("#lark-who"); if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`; }).catch(() => {});
+        if (tab === "swag") { window.SwagPanels?.mountRolesSection?.($("#roles-section"), r.settings?.roles || {}, api, esc, toast); api("/api/super/lark?fresh").then((l) => { const el = $("#lark-who"); if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`; }).catch(() => {}); }
       } catch (err) { if (!stale()) body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
       return;
     }
