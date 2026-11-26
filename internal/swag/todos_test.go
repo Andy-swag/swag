@@ -635,6 +635,23 @@ func TestWatchdogCatchesEmptyPromiseRefusalAndOrphanTasks(t *testing.T) {
 		t.Fatalf("worker initial brief should be delivered raw without wrapper or 700-rune spill, got: %q", prompt[:min(len(prompt), 200)])
 	}
 
+	// 2e. Silent router terminal reply to human chat (without `swag reply`) is surfaced instead of swallowed.
+	askedAt := time.Now().Add(-8 * time.Second)
+	sp.st.Triggers = append(sp.st.Triggers, &Trigger{ID: "t500", Source: "chat", Thread: mainThread, At: askedAt.Add(-time.Second), Text: "帮我检查两个环境依赖"})
+	termLines := []string{
+		"  Reply with swag reply, usually ≤200 characters.",
+		"",
+		"• 可以做常规兼容性核对，建议核对官方环境状态与项目依赖版本。",
+		"  Worked for 6s • 3:35 PM",
+		"› Ask Codex to do anything",
+	}
+	sp.mu.Lock()
+	surfaced := sp.surfaceSilentRouterReplyLocked(askedAt, termLines, 1)
+	sp.mu.Unlock()
+	if !surfaced || len(sp.st.Entries) == 0 || !strings.Contains(sp.st.Entries[len(sp.st.Entries)-1].Text, "可以做常规兼容性核对") {
+		t.Fatalf("expected silent router terminal reply to be surfaced to chat, surfaced=%v entries=%+v", surfaced, sp.st.Entries)
+	}
+
 	// 3. Orphan open task scan alerts stale unowned quota-audit, skips approval-wait.
 	alerted := sp.checkOrphanOpenTasks(time.Now())
 	if len(alerted) != 1 || alerted[0] != "quota-audit" {

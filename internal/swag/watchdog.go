@@ -63,8 +63,8 @@ func (sp *Super) handleWorkerNonProgressLocked(w *Worker, summary string) bool {
 	}
 	if isWorkerRefusal(w, summary) {
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (safety/prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct engineering brief on the right machine/role (or switch engine/model, e.g. claude or swag-pool), or clearly report the blocker to the human.", w.Name, summary, w.Name), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/误拒，需换路或重派", w.Name, "error")
+			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (safety/prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct engineering brief using a different model from the pool (e.g. --auth-profile swag-pool --model tier-standard), or clearly report the blocker to the human.", w.Name, summary, w.Name), "", "", w.Name)
+		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/误拒，需换模型重派", w.Name, "error")
 		return true
 	}
 	if age < 90*time.Second && w.ReportAt.IsZero() && strings.TrimSpace(summary) != "" {
@@ -183,6 +183,57 @@ func (sp *Super) checkEmptyPromiseLocked(asked time.Time, reply *Entry) bool {
 	msg := fmt.Sprintf("[watchdog] 你刚才在回复 %s 中说明了未完成或后续动作，但本轮未派出任何 Worker，当前也没有运行中的 Worker（进行中任务：%s）。由于你是事件驱动控制器，回复完即休眠，任务不会自行推进。请现在立刻 spawn 新 Worker 完成剩余已授权步骤；若确实需要主人决策或外部人工操作，请用 `swag reply --opt/--check` 明确告知缺口，不要空口停在原地。",
 		reply.ID, strings.Join(open, ", "))
 	sp.ingestLocked("system", mainThread, "watchdog", msg, "", "", "")
+	return true
+}
+
+func extractTerminalAssistantReply(lines []string, start int) string {
+	var out []string
+	for i := start; i < len(lines); i++ {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		if strings.HasPrefix(l, "Worked for ") || strings.HasPrefix(l, "› ") || strings.HasPrefix(l, "← ") || strings.HasPrefix(l, "GPT-") || strings.HasPrefix(l, "─") || strings.HasPrefix(l, "└") || strings.HasPrefix(l, "│") || strings.HasPrefix(l, "┌") {
+			if len(out) > 0 && (strings.HasPrefix(l, "Worked for ") || strings.HasPrefix(l, "› ")) {
+				break
+			}
+			continue
+		}
+		l = strings.TrimSpace(strings.TrimPrefix(l, "• "))
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return clip(strings.Join(out, " "), 500)
+}
+
+// surfaceSilentRouterReplyLocked recovers when the router answered a direct
+// human chat message only in its terminal (e.g. a refusal without calling
+// `swag reply`) and dispatched no worker, preventing infinite silence in chat.
+func (sp *Super) surfaceSilentRouterReplyLocked(asked time.Time, lines []string, start int) bool {
+	if sp.hasWorkingOrFreshActionLocked(asked) {
+		return false
+	}
+	var hasHumanChat bool
+	cutoff := asked.Add(-30 * time.Second)
+	for i := len(sp.st.Triggers) - 1; i >= 0; i-- {
+		t := sp.st.Triggers[i]
+		if t.At.Before(cutoff) {
+			break
+		}
+		if t.Source == "chat" && t.Thread == mainThread {
+			hasHumanChat = true
+			break
+		}
+	}
+	if !hasHumanChat {
+		return false
+	}
+	reply := extractTerminalAssistantReply(lines, start)
+	if reply == "" || isStartupBannerOnly(reply) {
+		return false
+	}
+	sp.addEntryReplyLocked("swag", mainThread, "（终端直出，未调 reply）"+reply, routerName, "", nil, nil, false)
 	return true
 }
 

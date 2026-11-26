@@ -1940,6 +1940,7 @@ func (sp *Super) routerSettled(ctx context.Context, pane string) {
 	}
 	sp.mu.Lock()
 	sp.routerRetries = 0 // a quiet turn, no error: it is working again
+	sp.surfaceSilentRouterReplyLocked(asked, lines, start)
 	sp.mu.Unlock()
 }
 
