@@ -20,8 +20,24 @@ var (
 	emptyPromiseRe = regexp.MustCompile(`(?i)(下一步由我|接下来(我会|我去|将)|我会.*(查|核实|核验|继续|跟进|处理|补)|仍待(核|查|验证|证)|还欠|还没做完|目前(也)?没有后台|稍后(再)?(查|核|补|跟进)|will check|i'?ll (check|investigate|follow up|verify) next)`)
 	waitingHumanRe = regexp.MustCompile(`(?i)(等你|等主人|请(你|主人|您).*(确认|批准|回复|提供|决定|刷新|操作)|需要你|等待(用户|主人|审批|确认|人工|根因修复|进一步证据)|待(审批|确认|主人|用户)|已通知|awaiting (your|human|user))`)
 	workerRefusalRe = regexp.MustCompile(`(?i)(无法将.*系统事件视为.*授权|不能将.*系统事件视为.*授权|不会据此访问.*平台|向外部进程发送|不会对.*内部环境开展|不会.*(定向探查|探测|扫描).*内部|暴露服务拓扑|安全控制弱点|prompt injection|untrusted system event|cannot treat.*system event.*authorization|refuse to (execute|run|access)|cannot (probe|scan|inspect).*internal)`)
-	bannerOnlyRe   = regexp.MustCompile(`(?i)(OpenAI Codex|Ask Codex to do anything|YOLO mode|Claude Code)`)
+	bannerOnlyRe    = regexp.MustCompile(`(?i)(OpenAI Codex|Ask Codex to do anything|YOLO mode|Claude Code)`)
+	agentFatalErrRe = regexp.MustCompile(`(?i)(api error|please run /login|invalid api key|quota exceeded|daily limit|rate.?limit(ed)?\b|overloaded|unauthori[sz]ed|credit balance|unexpected status \d{3})`)
+	agentWarnRe     = regexp.MustCompile(`(?i)(⚠\s*\d+\s*warnings?|f2 to view|⚠\s*warning\b|update available|deprecated|model.?fallback|falling back to|migrations?\b)`)
 )
+
+func isAgentFatalError(line string) bool {
+	s := strings.TrimSpace(line)
+	if s == "" {
+		return false
+	}
+	if agentFatalErrRe.MatchString(s) {
+		return true
+	}
+	if agentWarnRe.MatchString(s) {
+		return false
+	}
+	return agentErrRe.MatchString(s)
+}
 
 var watchdogState = struct {
 	sync.Mutex

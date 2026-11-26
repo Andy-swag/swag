@@ -1900,7 +1900,7 @@ func (sp *Super) routerSettled(ctx context.Context, pane string) {
 	}
 	for i := start; i < len(lines); i++ {
 		l := strings.TrimSpace(lines[i])
-		if l == "" || !agentErrRe.MatchString(l) {
+		if l == "" || !isAgentFatalError(l) {
 			continue
 		}
 		// Messages wrap in the terminal: keep following lines of the same block.

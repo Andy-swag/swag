@@ -229,6 +229,23 @@ func (s *Server) externalSessions() []*External {
 	used := map[int]bool{}
 	claimed := map[string]bool{}
 	listed := map[string]bool{}
+	var codexIndex []codexRolloutEntry
+	var codexIndexed bool
+	ensureCodexIndex := func(minSince time.Time) []codexRolloutEntry {
+		if !codexIndexed {
+			codexIndexed = true
+			codexIndex = s.scanCodexRollouts(minSince)
+		}
+		return codexIndex
+	}
+	minCodexSince := now
+	for _, p := range cands {
+		if externalKinds[p.name] == "codex" {
+			if st := now.Add(-p.age).Add(-5 * time.Second); st.Before(minCodexSince) {
+				minCodexSince = st
+			}
+		}
+	}
 	for _, p := range cands {
 		app, inHerdr := terminalApp(ps, p)
 		if r := regOf[p.pid]; r != nil {
@@ -237,7 +254,11 @@ func (s *Server) externalSessions() []*External {
 		kind := externalKinds[p.name]
 		if inHerdr {
 			tmp := &External{Kind: kind, PID: p.pid, Cwd: cwds[p.pid], Started: now.Add(-p.age)}
-			s.locateExternal(tmp, p, claimed)
+			if kind == "codex" {
+				s.locateExternalCodex(tmp, p, claimed, ensureCodexIndex(minCodexSince))
+			} else {
+				s.locateExternal(tmp, p, claimed)
+			}
 			if tmp.Session != "" {
 				claimed[kind+":"+tmp.Session] = true
 				listed[tmp.Session] = true
@@ -245,7 +266,11 @@ func (s *Server) externalSessions() []*External {
 			continue
 		}
 		e := &External{ID: fmt.Sprintf("%s-%d", kind, p.pid), Kind: kind, PID: p.pid, Cwd: cwds[p.pid], App: app, Started: now.Add(-p.age), Live: true}
-		s.locateExternal(e, p, claimed)
+		if kind == "codex" {
+			s.locateExternalCodex(e, p, claimed, ensureCodexIndex(minCodexSince))
+		} else {
+			s.locateExternal(e, p, claimed)
+		}
 		if e.Session != "" {
 			claimed[e.Kind+":"+e.Session] = true
 		}
@@ -344,43 +369,7 @@ func (s *Server) locateExternal(e *External, p *proc, claimed map[string]bool) {
 			}
 		}
 	case "codex":
-		root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
-		// Prefer explicit `codex resume <session-uuid>` from command args so
-		// multiple tmux/terminal sessions sharing the same cwd don't collide.
-		for i, a := range p.args {
-			if a == "resume" && i+1 < len(p.args) && conversationRe.MatchString(p.args[i+1]) {
-				wantID := p.args[i+1]
-				if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+wantID+".jsonl")); len(m) > 0 {
-					e.Session, e.path, e.format = wantID, m[0], "codex"
-					return
-				}
-				files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
-				for _, f := range files {
-					if id, _ := codexMeta(f); id == wantID {
-						e.Session, e.path, e.format = wantID, f, "codex"
-						return
-					}
-				}
-				break
-			}
-		}
-		files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
-		var best string
-		var bestAt time.Time
-		for _, f := range files {
-			fi, err := os.Stat(f)
-			if err != nil || fi.ModTime().Before(since) {
-				continue
-			}
-			id, cwd := codexMeta(f)
-			if cwd != e.Cwd || (id != "" && claimed["codex:"+id]) || fi.ModTime().Before(bestAt) {
-				continue
-			}
-			best, bestAt, e.Session = f, fi.ModTime(), id
-		}
-		if best != "" {
-			e.path, e.format = best, "codex"
-		}
+		s.locateExternalCodex(e, p, claimed, nil)
 	case "agy":
 		brain := filepath.Join(s.agyCLIHome(), "brain")
 		for i, a := range p.args {
@@ -412,6 +401,83 @@ func (s *Server) locateExternal(e *External, p *proc, claimed map[string]bool) {
 			}
 			e.Session, e.path, e.format, bestAt = id, f, "agy", fi.ModTime()
 		}
+	}
+}
+
+type codexRolloutEntry struct {
+	path   string
+	mod    time.Time
+	id     string
+	cwd    string
+	parsed bool
+}
+
+func (s *Server) scanCodexRollouts(minSince time.Time) []codexRolloutEntry {
+	root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
+	files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
+	out := make([]codexRolloutEntry, 0, len(files))
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		var id, cwd string
+		parsed := minSince.IsZero() || !fi.ModTime().Before(minSince)
+		if parsed {
+			id, cwd = codexMeta(f)
+		}
+		out = append(out, codexRolloutEntry{path: f, mod: fi.ModTime(), id: id, cwd: cwd, parsed: parsed})
+	}
+	return out
+}
+
+func (s *Server) locateExternalCodex(e *External, p *proc, claimed map[string]bool, index []codexRolloutEntry) {
+	since := e.Started.Add(-5 * time.Second)
+	root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
+	for i, a := range p.args {
+		if a == "resume" && i+1 < len(p.args) && conversationRe.MatchString(p.args[i+1]) {
+			wantID := p.args[i+1]
+			if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+wantID+".jsonl")); len(m) > 0 {
+				e.Session, e.path, e.format = wantID, m[0], "codex"
+				return
+			}
+			if index == nil {
+				index = s.scanCodexRollouts(time.Time{})
+			}
+			for idx := range index {
+				if !index[idx].parsed {
+					index[idx].id, index[idx].cwd = codexMeta(index[idx].path)
+					index[idx].parsed = true
+				}
+				if index[idx].id == wantID {
+					e.Session, e.path, e.format = wantID, index[idx].path, "codex"
+					return
+				}
+			}
+			break
+		}
+	}
+	if index == nil {
+		index = s.scanCodexRollouts(since)
+	}
+	var best string
+	var bestAt time.Time
+	for idx := range index {
+		it := &index[idx]
+		if it.mod.Before(since) {
+			continue
+		}
+		if !it.parsed {
+			it.id, it.cwd = codexMeta(it.path)
+			it.parsed = true
+		}
+		if it.cwd != e.Cwd || (it.id != "" && claimed["codex:"+it.id]) || it.mod.Before(bestAt) {
+			continue
+		}
+		best, bestAt, e.Session = it.path, it.mod, it.id
+	}
+	if best != "" {
+		e.path, e.format = best, "codex"
 	}
 }
 

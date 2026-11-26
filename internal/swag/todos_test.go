@@ -721,3 +721,81 @@ func TestFinishDreamQueuesInteractiveCardInQuietMode(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAgentFatalErrorFiltersNonFatalWarnings(t *testing.T) {
+	nonFatal := []string{
+		"",
+		"  ⚠ 1 warning · f2 to view  ",
+		"⚠ 2 warnings · press F2 to view",
+		"⚠ Warning: falling back to default model",
+		"⚠ Update available: 0.42.0",
+		"⚠ deprecated flag ignored",
+		"⚠ model fallback applied",
+	}
+	for _, line := range nonFatal {
+		if isAgentFatalError(line) {
+			t.Fatalf("expected non-fatal warning to be ignored: %q", line)
+		}
+	}
+	fatal := []string{
+		"API error: 503 Service Unavailable",
+		"⚠ rate limit exceeded, try again later",
+		"⚠ Authentication failed: Please run /login",
+		"unexpected status 429 Too Many Requests",
+		"⚠ invalid api key",
+		"⚠ model overloaded",
+		"⚠ something broke badly",
+	}
+	for _, line := range fatal {
+		if !isAgentFatalError(line) {
+			t.Fatalf("expected fatal error to be detected: %q", line)
+		}
+	}
+}
+
+func TestSinglePassCodexRolloutMatching(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	sessDir := filepath.Join(home, ".codex", "sessions", "2026", "11", "26")
+	if err := os.MkdirAll(sessDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	writeRollout := func(name, id, cwd string, mtime time.Time) string {
+		p := filepath.Join(sessDir, name)
+		line := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"` + cwd + `"}}` + "\n"
+		if err := os.WriteFile(p, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p1 := writeRollout("rollout-a.jsonl", "019a0000-0000-7000-8000-000000000001", "/tmp/work-a", now.Add(-2*time.Minute))
+	p2 := writeRollout("rollout-b.jsonl", "019a0000-0000-7000-8000-000000000002", "/tmp/work-a", now.Add(-1*time.Minute))
+	// Subagent child rollout should be skipped cleanly without re-matching.
+	subPath := filepath.Join(sessDir, "rollout-sub.jsonl")
+	if err := os.WriteFile(subPath, []byte(`{"type":"session_meta","payload":{"id":"019a0000-0000-7000-8000-000000000003","cwd":"/tmp/work-a","parent_thread_id":"019a0000-0000-7000-8000-000000000002"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{home: home}
+	index := s.scanCodexRollouts(now.Add(-5 * time.Minute))
+	if len(index) != 3 {
+		t.Fatalf("expected 3 rollouts in single-pass index, got %d", len(index))
+	}
+	claimed := map[string]bool{}
+	e1 := &External{Kind: "codex", Cwd: "/tmp/work-a", Started: now.Add(-3 * time.Minute)}
+	s.locateExternalCodex(e1, &proc{args: []string{"codex"}}, claimed, index)
+	if e1.Session != "019a0000-0000-7000-8000-000000000002" || e1.path != p2 {
+		t.Fatalf("expected newest rollout p2, got session=%q path=%q", e1.Session, e1.path)
+	}
+	claimed["codex:"+e1.Session] = true
+
+	e2 := &External{Kind: "codex", Cwd: "/tmp/work-a", Started: now.Add(-3 * time.Minute)}
+	s.locateExternalCodex(e2, &proc{args: []string{"codex"}}, claimed, index)
+	if e2.Session != "019a0000-0000-7000-8000-000000000001" || e2.path != p1 {
+		t.Fatalf("expected unclaimed rollout p1, got session=%q path=%q", e2.Session, e2.path)
+	}
+}

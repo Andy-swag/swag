@@ -2475,13 +2475,14 @@
   });
 
   // ───────────────────────────── agents in other terminals (outside herdr)
-  let ext = [], extTimer, extStream = null, extCur = null;
-  async function loadExternal() {
-    if (document.hidden && ext.length) return;
-    try { ext = (await api("/api/external")).sessions || []; } catch { return; }
-    ext = ext.concat(...await fromHubs("/api/external", "ext"));
-    renderExt();
-    if (view === "ext") renderExtHead();
+  let ext = [], extTimer, extStream = null, extCur = null, extLoad = null, liveAll = false;
+  function loadExternal() {
+    return extLoad || (extLoad = (async () => {
+      if (document.hidden && ext.length) return;
+      try { ext = (await api("/api/external")).sessions || []; } catch { return; }
+      ext = ext.concat(...await fromHubs("/api/external", "ext"));
+      renderExt(); if (view === "ext") renderExtHead();
+    })().finally(() => { extLoad = null; }));
   }
 
   // The same list from every other hub, ids tagged; a hub that doesn't
@@ -2660,8 +2661,7 @@
     const busy = live.filter((x) => x.rank <= 1).length;
     $("#live-count").textContent = busy ? `${busy} 个在跑` : live.length || "";
     window.SwagPanels?.syncIdleReapButton?.($("#live-reap"), sup.workers, state.agents, api, esc, toast);
-    $("#live-list").innerHTML = live.map((x) => x.html).join("")
-      || `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Swag 派一个。</li>`;
+    window.SwagPanels?.renderLiveList?.($("#live-list"), live, liveAll, (v) => { liveAll = v; renderExt(); });
 
     // 最近: newest first; Swag's own sessions are reached from its conversation.
     const deckRan = (name) => name === ROUTER || sup.workers.some((w) => w.name === name);
@@ -2801,7 +2801,7 @@
     primeThread(el, "x:" + id);
     resetEarlier(el, (c) => `/api/external/${encodeURIComponent(id)}/earlier?before=${c}`);
     extSoonN = 0;
-    if (!ext.some((e) => e.id === id)) await loadExternal();
+    if (!ext.some((e) => e.id === id)) void loadExternal();
     renderExtHead();
     const mine = () => view === "ext" && extCur === id;
     // The stream drops when the hub restarts or the computer reconnects:

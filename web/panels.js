@@ -1844,5 +1844,33 @@
     paint();
   }
 
-  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton, mountRolesSection };
+  function renderLiveList(ul, live, expanded, onToggle) {
+    if (!ul) return;
+    if (!ul._liveBound) {
+      ul._liveBound = true;
+      ul.addEventListener("click", (ev) => {
+        if (!ev.target.closest("[data-act=live-more]")) return;
+        ev.preventDefault();
+        ul._onLiveToggle?.();
+      });
+    }
+    ul._onLiveToggle = () => onToggle(!expanded);
+    if (!live.length) {
+      ul.innerHTML = `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Swag 派一个。</li>`;
+      return;
+    }
+    const LIVE_N = 8;
+    let shown = expanded || live.length <= LIVE_N ? live : live.slice(0, LIVE_N);
+    if (!expanded && live.length > LIVE_N) {
+      const cur = live.slice(LIVE_N).find((x) => x.on);
+      if (cur) shown = [...shown, cur];
+    }
+    const hiddenN = live.length - shown.length;
+    const more = live.length > LIVE_N && (expanded || hiddenN > 0)
+      ? `<li><button type="button" class="more-row" data-act="live-more">${expanded ? "收起" : `展开其余 ${hiddenN} 个`}</button></li>`
+      : "";
+    ul.innerHTML = shown.map((x) => x.html).join("") + more;
+  }
+
+  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton, mountRolesSection, renderLiveList };
 })();
