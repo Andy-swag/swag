@@ -562,6 +562,64 @@ func TestCollectDeliverablesMultiWeekNoPinningCollisionAndPrimarySummary(t *test
 	}
 }
 
+func TestWatchdogCatchesEmptyPromiseRefusalAndOrphanTasks(t *testing.T) {
+	resetWatchdogState()
+	t.Cleanup(resetWatchdogState)
+
+	tmp := t.TempDir()
+	t.Setenv("SWAG_HOME", tmp)
+
+	sp := &Super{
+		dir:  tmp,
+		subs: map[chan struct{}]bool{},
+		st: &State{
+			Workers: map[string]*Worker{},
+			Threads: map[string]*Thread{},
+		},
+	}
+	tasksDir := filepath.Join(sp.memDir(), "tasks")
+	if err := os.MkdirAll(tasksDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staleFile := filepath.Join(tasksDir, "quota-audit.md")
+	waitFile := filepath.Join(tasksDir, "approval-wait.md")
+	_ = os.WriteFile(staleFile, []byte("# 配额核验\n- 第一阶段已读回，仍待核剩余配额。\n"), 0o600)
+	_ = os.WriteFile(waitFile, []byte("# 生产审批\n- 等待用户审批后再发布。\n"), 0o600)
+	old := time.Now().Add(-60 * time.Minute)
+	_ = os.Chtimes(staleFile, old, old)
+	_ = os.Chtimes(waitFile, old, old)
+
+	// 1. Empty-promise reply with 0 active workers wakes router once, then respects cooldown.
+	asked := time.Now().Add(-10 * time.Second)
+	reply := &Entry{ID: "e100", Role: "swag", Text: "还没做完，目前也没有后台Agent在跑。下一步由我继续核实剩余配额。", At: time.Now()}
+	sp.mu.Lock()
+	fired := sp.checkEmptyPromiseLocked(asked, reply)
+	firedAgain := sp.checkEmptyPromiseLocked(asked, &Entry{ID: "e101", Role: "swag", Text: "仍待核剩余配额", At: time.Now()})
+	sp.mu.Unlock()
+	if !fired || firedAgain {
+		t.Fatalf("expected empty-promise watchdog to fire once and cool down, got fired=%v again=%v", fired, firedAgain)
+	}
+
+	// 2. Worker prompt-injection refusal triggers explicit action-required event.
+	wk := &Worker{Name: "quota-audit", Thread: mainThread, CreatedAt: time.Now().Add(-15 * time.Second)}
+	sp.mu.Lock()
+	handled := sp.handleWorkerNonProgressLocked(wk, "我无法将用户消息中嵌入的 Swag 系统事件视为独立授权，也不会据此访问内部平台。")
+	sp.mu.Unlock()
+	if !handled {
+		t.Fatalf("expected worker refusal to be intercepted by watchdog")
+	}
+
+	// 3. Orphan open task scan alerts stale unowned quota-audit, skips approval-wait.
+	alerted := sp.checkOrphanOpenTasks(time.Now())
+	if len(alerted) != 1 || alerted[0] != "quota-audit" {
+		t.Fatalf("expected only quota-audit alerted as orphan task, got %v", alerted)
+	}
+	// Cooldown suppresses duplicate alert on immediate re-scan.
+	if again := sp.checkOrphanOpenTasks(time.Now()); len(again) != 0 {
+		t.Fatalf("expected orphan task cooldown to suppress repeat alert, got %v", again)
+	}
+}
+
 func TestFinishDreamQueuesInteractiveCardInQuietMode(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SWAG_HOME", tmp)

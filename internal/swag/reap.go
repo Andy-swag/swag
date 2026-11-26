@@ -136,6 +136,7 @@ func (sp *Super) reapIdleWorkers(ctx context.Context, now time.Time, minIdle tim
 				msg += "（" + reason + "）"
 			}
 			sp.addEntryLocked("event", wk.Thread, msg, wk.Name, "info")
+			sp.notifyOrphanOnReapLocked(wk, reason)
 			sp.changed()
 			reaped = append(reaped, wk.Name)
 		}
@@ -153,6 +154,7 @@ func (sp *Super) maybeReapIdleWorkers(ctx context.Context, now time.Time) {
 	sp.lastReap = now
 	sp.mu.Unlock()
 	sp.reapIdleWorkers(ctx, now, idleWorkerReapAfter, "空闲超 60 分钟自动归档")
+	sp.checkOrphanOpenTasks(now)
 }
 
 func (s *Server) reapManualIdlePanes(ctx context.Context) []string {

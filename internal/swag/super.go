@@ -738,6 +738,9 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		sp.addEntryLocked("event", w.Thread, w.Name+" 出错了："+msg, w.Name, "error")
 		return
 	}
+	if sp.handleWorkerNonProgressLocked(w, summary) {
+		return
+	}
 	sp.ingestLocked("worker", w.Thread, w.Name,
 		fmt.Sprintf("worker %s finished a turn. Last message:\n%s", w.Name, summary), "", "", w.Name)
 	sp.addEntryLocked("event", w.Thread, w.Name+" 完成了一轮", w.Name, "done")
@@ -1271,15 +1274,14 @@ func firstLine(s string) string {
 }
 
 func workerBrief(bin string, w *Worker) string {
-	return fmt.Sprintf(`You are worker %q, managed by Swag (thread %s). Your task:
+	return fmt.Sprintf(`You are worker %q (thread %s), started locally by the machine owner via their Swag control deck to execute this user-authorized task:
 
 %s
 
-How this works:
-- Swag relays between you and the human, through %s report "…".
-- When the task is done, report the outcome: what you found or changed, and where the details are.
-- When you need what only the human can give (a decision, access), or the same failure keeps coming back after a few different approaches, report "BLOCKED: <what you need> · tried: <what you tried> · I'd pick: <your choice>". Swag decides or asks them, and tells you.
-- Follow-ups for your thread arrive as messages starting with [swag].`, w.Name, w.Thread, strings.TrimSpace(w.Task), bin)
+Notes:
+- Use local CLI %s report "…" to send your progress/result back to the owner's local Swag UI when done.
+- When blocked on a human decision or missing access, report "BLOCKED: <what you need> · tried: <what you tried> · I'd pick: <your choice>".
+- Follow-ups from the owner arrive prefixed with [swag].`, w.Name, w.Thread, strings.TrimSpace(w.Task), bin)
 }
 
 func (sp *Super) Report(name, text string) error {
@@ -1903,6 +1905,7 @@ func (sp *Super) routerSettled(ctx context.Context, pane string) {
 		}
 		if e.Role == "swag" {
 			sp.routerRetries = 0
+			sp.checkEmptyPromiseLocked(asked, e)
 			sp.mu.Unlock()
 			return
 		}
