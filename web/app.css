@@ -1379,7 +1379,7 @@ a.url:hover { text-decoration-color: currentColor; }
 .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px 20px; border-top: 1px solid var(--line); background: var(--bg); }
 
 /* ─── toasts ─── */
-.toasts { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
+.toasts { position: fixed; z-index: 220; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
 .toast { padding: 10px 16px; border-radius: 12px; font-size: 13px; background: var(--fg); color: var(--bg); box-shadow: var(--shadow); animation: rise .2s ease-out; }
 .toast.attn { background: var(--attn); color: #fff; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
@@ -1550,7 +1550,7 @@ select.picked { display: none; }
 .pick.chip .pi svg { width: 14px; height: 14px; }
 
 .pick-pop {
-  position: fixed; z-index: 70; max-width: min(360px, calc(100vw - 16px)); max-height: min(380px, 60vh); overflow: auto;
+  position: fixed; z-index: 200; max-width: min(360px, calc(100vw - 16px)); max-height: min(380px, 60vh); overflow: auto;
   padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg);
   animation: pick-in .12s ease-out;
 }
@@ -1568,7 +1568,7 @@ select.picked { display: none; }
 .po .ck { width: 14px; height: 14px; flex: none; color: var(--fg); visibility: hidden; }
 .po.on .ck { visibility: visible; }
 .po.on { font-weight: 500; }
-.pick-back { position: fixed; inset: 0; z-index: 69; background: rgba(0, 0, 0, .28); animation: pick-fade .15s; }
+.pick-back { position: fixed; inset: 0; z-index: 199; background: rgba(0, 0, 0, .28); animation: pick-fade .15s; }
 @keyframes pick-fade { from { opacity: 0; } }
 .pick-pop.sheet {
   left: 0; right: 0; bottom: 0; top: auto; max-width: none; max-height: 70dvh; border-radius: 18px 18px 0 0; border-bottom: 0;
