@@ -287,8 +287,9 @@ type State struct {
 	Threads   map[string]*Thread `json:"threads"`
 	Workers   map[string]*Worker `json:"workers"`
 	Entries   []*Entry           `json:"entries"`
-	Dismissed map[string]bool    `json:"dismissed,omitempty"`
-	Pinned    []string           `json:"pinned,omitempty"`
+	Dismissed  map[string]bool    `json:"dismissed,omitempty"`
+	Pinned     []string           `json:"pinned,omitempty"`
+	ReadCursor string             `json:"read_cursor,omitempty"`
 	Timers    []*Timer           `json:"timers"`
 	Policies  []Policy           `json:"policies"`
 	Settings  Settings           `json:"settings"`

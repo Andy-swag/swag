@@ -19,7 +19,7 @@ import (
 var cliCommands = map[string]func([]string) error{
 	"reply": cliReply, "spawn": cliSpawn, "send": cliSend, "report": cliReport,
 	"subscribe": cliSubscribe, "stop": cliStop, "answer": cliAnswer, "show": cliShow, "list": cliList,
-	"timer": cliTimer, "todo": cliTodo, "say": cliSay, "hook": cliHook, "pair": cliPair,
+	"timer": cliTimer, "todo": cliTodo, "say": cliSay, "hook": cliHook, "pair": cliPair, "memory": cliMemory,
 }
 
 func swagDir() string {
@@ -583,11 +583,19 @@ tidies memory/. Its journal is in dreams/.
   When notes/ has something the task can reuse (where the data is, how it was done last
   time, a pitfall), put it in the brief: the note's full path for a worker on this
   computer ("先读 /…/memory/notes/x.md"), the relevant lines themselves for one on another.
-  Leaving out --kind/--model/--effort uses the human's current default, set in settings
-  ({{WKIND}} when this session began). Pass one when what they want is clear from the
-  conversation, said outright or not: they asked for Codex earlier in this job, a retry
-  of a worker that ran with a model they chose, a task the default can't do on that
-  computer. Carry over choices they already made; ask only when it's genuinely unclear.
+  Strictly respect the human's default agent/model/effort from settings ({{WKIND}} when
+  this session began): leave out --kind/--model/--effort by default. Only pass
+  --kind/--model/--effort when:
+  (1) the human explicitly specifies it in conversation or in memory/instructions.md
+      (including carrying over a choice they already made in the same job),
+  (2) the default agent/model is unavailable or actually failed on that computer and
+      needs a fallback, or
+  (3) **capability escalation**: a lower-tier model or lower reasoning effort (e.g.
+      tier-fast / low / medium) genuinely failed to solve the task, stalled, or hit
+      capability limits after trying — in that case, escalate one rung up
+      (tier-fast → tier-standard → tier-strong, or effort low → medium → high on the
+      default model) and note the escalation when reporting back.
+  NEVER override the default model based on subjective quality opinions in notes/agents.md.
 - ` + "`{{BIN}} send WORKER \"text\"`" + ` — steer a worker; it gets the message now, even mid-task.
 - ` + "`{{BIN}} answer WORKER CHOICE`" + ` — answer the dialog a worker is stuck on: the choice's
   number (as listed in the BLOCKED event), words of its label, or ` + "`esc`" + `.
@@ -618,8 +626,8 @@ tidies memory/. Its journal is in dreams/.
   next similar job can reuse (where the data lives, the command or query that worked,
   a pitfall, where the result file is), add it to the matching notes/ file, or a new
   one listed in notes/index.md; one-off details can go. What you learned about an
-  agent (it failed on that computer, that model was slow, it handled this kind of job
-  well) goes into notes/agents.md; read it when choosing who does a job.
+  agent's machine availability, failures/workarounds, or verified escalation thresholds
+  goes into notes/agents.md; read it for compatibility, never to subjectively override the default model.
 - Once a worker's result is passed on and nothing more is coming for it (a one-off job,
   a check, a trial run), ` + "`stop`" + ` it, so the list holds only work in flight. Keep it while
   a next step waits on it: the human's answer, a fix to make, a follow-up.

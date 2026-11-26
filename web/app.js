@@ -832,6 +832,7 @@
     if (!btn || !sc) return;
     const dist = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
     if (dist <= 24) superJumpHiding = false;
+    window.SwagChat?.syncJumpBadge?.(btn, chatEntries(), view === "swag" && dist <= 28, api);
     const show = view === "swag" && !pendingOpen && !superJumpHiding && dist > SUPER_JUMP_DIST;
     if (btn.hidden === !show) return;
     const hadFocus = !show && document.activeElement === btn;
@@ -1347,12 +1348,7 @@
     // other agents' sessions do; the header keeps the resting states.
     const busy = r.replied ? null : { working: "Swag 在想…", starting: "Swag 正在醒来…", blocked: "Swag 在等你在电脑上确认", dreaming: "Swag 在做梦，整理完记忆会自己醒来" }[r.status];
     st.hidden = !!busy;
-    if (busy) {
-      // In Swag's own column, where its next message will appear.
-      wk.className = "working-row say " + (r.status === "working" ? "working" : deckDot(r.status));
-      if (busy !== prevBusy) wk.innerHTML = `<span class="avatar"><img src="/icon.svg" alt=""></span><span class="wk-t">${esc(busy)}</span>`;
-    }
-    wk.hidden = !busy;
+    window.SwagChat?.syncWorkingRow?.(wk, busy, "working-row say " + (r.status === "working" ? "working" : deckDot(r.status)), busy ? `<span class="avatar"><img src="/icon.svg" alt=""></span><span class="wk-t">${esc(busy)}</span>` : "");
     $("#router-queue").textContent = sup.paused ? "已暂停投递" : routerQueued() ? `${routerQueued()} 条事件排队中` : "";
     const cx = $("#router-ctx");
     cx.textContent = r.handover ? "正在交接记忆…" : r.alive && r.context ? `上下文 ${r.context}%` : "";
@@ -1385,6 +1381,8 @@
       // a word on the worker whose line it follows.
       let lastUser = "", sinceUser = 0, lastEvent = "", lastDeck = "", sinceDeck = 0;
       const allEntries = chatEntries();
+      window.SwagChat?.updateServerCursor?.(sup.read_cursor, allEntries);
+      const unreadAfter = window.SwagChat?.unreadDividerAfter?.(allEntries) || "";
       const pendIds = new Set(activePending().map((p) => p.id));
       const pinIds = new Set(activePinned().map((p) => p.id));
       const entryPending = (idx, id) => {
@@ -1447,10 +1445,10 @@
         const pinned = !!(e.id && pinIds.has(e.id));
         const pinBadge = pinned ? `<div class="pin-ind">${ICON_PIN}<span>已钉住</span></div>` : "";
         if (e.role === "user") {
-          html += `<div class="mine${pinned ? " is-pinned" : ""}">${pinBadge}<div class="msg user" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${quote(e)}${userText(e.text)}</div>${mineActs(e, at, pinned)}</div>`;
+          html += `<div class="mine${pinned ? " is-pinned" : ""}" data-k="u:${esc(e.id || ei)}">${pinBadge}<div class="msg user" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${quote(e)}${userText(e.text)}</div>${mineActs(e, at, pinned)}</div>`;
           lastUser = e.id; sinceUser = 0; lastEvent = ""; sinceDeck++;
         } else if (e.role === "swag") {
-          html += `<div class="say${cont ? " cont" : ""}${pinned ? " is-pinned" : ""}"><span class="avatar">${cont ? "" : `<img src="/icon.svg" alt="">`}</span><div class="msg assistant" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${pinBadge}${quote(e)}${md(e.text)}${imagesIn(e.text)}${replyOpts(e, ei)}${msgActs(e, at, pinned)}</div></div>`;
+          html += `<div class="say${cont ? " cont" : ""}${pinned ? " is-pinned" : ""}" data-k="s:${esc(e.id || ei)}"><span class="avatar">${cont ? "" : `<img src="/icon.svg" alt="">`}</span><div class="msg assistant" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${pinBadge}${quote(e)}${md(e.text)}${imagesIn(e.text)}${replyOpts(e, ei)}${msgActs(e, at, pinned)}</div></div>`;
           sinceUser++; lastEvent = ""; lastDeck = e.id; sinceDeck = 0;
         } else {
           lastEvent = e.ref || "";
@@ -1472,8 +1470,9 @@
           const tone = e.tone === "blocked" ? "blocked" : e.tone === "done" ? "done" : e.tone === "spawn" ? (busy ? "working" : stuck ? "blocked" : "unknown") : e.tone === "error" ? "failed" : "unknown";
           // A spawn line carries its worker's state, in place of a line per change.
           const state = w ? (w.ended ? "已结束" : busy ? "还在跑" : stuck ? "等你确认" : "") : "";
-          html += `<${tag} class="event ${e.tone === "error" ? "error" : ""}"><span class="dot ${tone}"></span><span class="when">${hhmm(e.at)}</span><span>${esc(e.text)}</span>${state ? `<span class="wstate">${state}</span>` : ""}</${tag.split(" ")[0]}>`;
+          html += `<${tag} class="event ${e.tone === "error" ? "error" : ""}" data-k="ev:${esc(e.id || ei)}"><span class="dot ${tone}"></span><span class="when">${hhmm(e.at)}</span><span>${esc(e.text)}</span>${state ? `<span class="wstate">${state}</span>` : ""}</${tag.split(" ")[0]}>`;
         }
+        if (unreadAfter && e.id === unreadAfter) html += `<div class="unread-sep" data-k="unread-sep"><span>以下为新消息</span></div>`;
       }
     }
     // Everything waiting on the human, in one place, answerable right here.
@@ -1494,13 +1493,10 @@
     const busyChanged = (busy || "") !== prevBusy, crewChanged = crewHTML !== prevCrew;
     if (html !== superSig || force) {
       superSig = html;
-      box.innerHTML = html;
-      if (flashEntry.until > Date.now() && flashEntry.id) {
-        box.querySelector(`.msg[data-id="${CSS.escape(flashEntry.id)}"]`)?.classList.add("flash");
-      }
-    } else if (!busyChanged && !crewChanged) {
-      return;
-    }
+      window.SwagChat?.patchHTML ? window.SwagChat.patchHTML(box, html) : (box.innerHTML = html);
+      window.SwagChat?.refreshTopic?.();
+      if (flashEntry.until > Date.now() && flashEntry.id) box.querySelector(`.msg[data-id="${CSS.escape(flashEntry.id)}"]`)?.classList.add("flash");
+    } else if (!busyChanged && !crewChanged) { return; }
     if (holdRestore && !holdRestore.atBottom) {
       activeSwagRestore = { ...holdRestore, until: performance.now() + 340 };
       if (typeof cancelAnimationFrame === "function") {
@@ -1572,8 +1568,8 @@
       markProgrammaticScroll();
       sc.scrollTop = sc.scrollHeight;
       captureViewScroll("swag", null, navCur);
-      superJumpHiding = false;
-      updateSuperJump();
+      window.SwagChat?.markReadAtBottom?.(chatEntries(), api, true); window.SwagChat?.clearUnreadDivider?.();
+      superJumpHiding = false; updateSuperJump();
     });
   }
 
@@ -1811,7 +1807,7 @@
     if (e) setReply(e);
   });
 
-  async function sendSuper(text, re, restoreRe) {
+  async function sendSuper(text, re, restoreRe, opts = {}) {
     // Only what was picked here goes along; the hub fills in its current defaults.
     const t = targetNow(), p = target || {};
     const { model, effort } = modelNow(t);
@@ -1820,7 +1816,7 @@
     pendingSays.push(mine);
     activeSwagRestore = null;
     renderSide();
-    renderSuper({ force: true, scrollBottom: true });
+    renderSuper({ force: true, scrollBottom: !opts.keepScroll });
     let r;
     try {
       r = await api("/api/super/say", { body: { text, re: re?.entry || "",
@@ -1859,11 +1855,9 @@
     const id = grp.dataset.entry, text = b.dataset.opt;
     if (replyTo?.entry === id) setReply(null);
     const e = chatEntries().find((x) => x.id === id);
-    try {
-      await sendSuper(text, e ? { entry: e.id, who: "Swag", text: e.text } : { entry: id, who: "Swag", text: "" }, false);
-    } catch (err) {
-      delete grp.dataset.busy; grp.querySelectorAll("button").forEach((x) => { x.disabled = false; }); toast(err.message, "attn");
-    }
+    const sc = $("#super-thread")?.parentElement, keepScroll = !!(sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > AT_BOTTOM_PX);
+    try { await sendSuper(text, e ? { entry: e.id, who: "Swag", text: e.text } : { entry: id, who: "Swag", text: "" }, false, { keepScroll }); }
+    catch (err) { delete grp.dataset.busy; grp.querySelectorAll("button").forEach((x) => { x.disabled = false; }); toast(err.message, "attn"); }
   });
 
   $("#pending-wrap").addEventListener("click", (ev) => {
@@ -2026,7 +2020,7 @@
       「做梦」时，Swag 回顾最近的会话来整理记忆：替换过时的条目，发现只有跨多次对话才看得出的习惯（标记为 inferred）。</p>
       <div class="card"><div class="mem-dream"><span class="dot ${r.dreaming ? "starting" : "asleep"}"></span><span class="grow">${dream}</span>
         <button class="btn small" data-act="dream-now" ${r.dreaming ? "disabled" : ""}>${r.dreaming ? "做梦中…" : "现在整理"}</button></div>
-        <div class="mem-dream mem-load"><span class="grow">每次新会话先读：<b class="${over ? "warn" : ""}">${kb(r.loaded)}</b> / 建议 ${kb(r.budget)} 以内${over ? "（偏大，做梦时会精简）" : ""}</span></div></div>
+        <div class="mem-dream mem-load"><span class="grow">每次新会话先读：<b class="${over ? "warn" : ""}">${kb(r.loaded)}</b> / 建议 ${kb(r.budget)} 以内${over ? "（偏大，做梦时会精简）" : ""}</span><a class="btn small" href="/api/super/memory/export" download>导出 ZIP</a><button type="button" class="btn small" data-act="mem-import">导入 ZIP</button></div></div>
       ${legacy.length ? group("旧版记忆", "等下次做梦或换会话时拆进 memory/", legacy, { card: { open: true } }) : ""}
       ${group("进行中的任务", "一件事一个文件，每次都读", tasks, { card: { label: undefined, crew: true }, always: true, empty: "没有进行中的任务" })}
       ${group("指令", "你的长期要求和偏好，每次都读", ins, { card: { open: true, label: "instructions.md", sub: "" }, always: true, empty: "还没有" })}
@@ -2432,6 +2426,7 @@
       else { $("#auto-body")._memSig = ""; loadAuto(); }
       return;
     }
+    if (t.dataset.act === "mem-import") { window.SwagPanels?.openMemoryImportModal?.(api, esc, toast, () => { $("#auto-body")._memSig = ""; loadAuto(); }); return; }
     if (t.dataset.act === "dream-now") {
       t.disabled = true; t.textContent = "开始中…";
       try { await api("/api/super/dream", { body: {} }); toast("Swag 去做梦了"); }
@@ -4507,13 +4502,9 @@
   const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>`;
   const ICON_QUOTE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg>`;
   const pinActBtn = (id, pinned) => `<button type="button" class="pin-btn${pinned ? " on" : ""}" data-pin="${esc(id)}" aria-pressed="${pinned}" title="${pinned ? "取消钉住" : "钉住"}" aria-label="${pinned ? "取消钉住" : "钉住"}">${ICON_PIN}</button>`;
-  const msgActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">
-      <button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>
-      <button type="button" class="re-btn" data-re="${esc(e.id)}" title="引用回复" aria-label="引用回复">${ICON_QUOTE}</button>
-      ${pinActBtn(e.id, pinned)}
-      ${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}</div>` : "";
-  // Under your own message, at its right edge: when you said it, copy, and pin.
-  const mineActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}<button type="button" class="recall-btn" data-recall="${esc(e.id)}" title="撤回消息" aria-label="撤回消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button><button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>${pinActBtn(e.id, pinned)}</div>` : "";
+  const msgActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${window.SwagChat?.focusActBtn?.(e.id, esc) || ""}<button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button><button type="button" class="re-btn" data-re="${esc(e.id)}" title="引用回复" aria-label="引用回复">${ICON_QUOTE}</button>${pinActBtn(e.id, pinned)}${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}</div>` : "";
+  // Under your own message, at its right edge: when you said it, focus, recall, copy, and pin.
+  const mineActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}${window.SwagChat?.focusActBtn?.(e.id, esc) || ""}<button type="button" class="recall-btn" data-recall="${esc(e.id)}" title="撤回消息" aria-label="撤回消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button><button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>${pinActBtn(e.id, pinned)}</div>` : "";
   async function copyText(t) {
     if (navigator.clipboard && window.isSecureContext) {
       try { await navigator.clipboard.writeText(t); return true; } catch {}
@@ -5795,5 +5786,6 @@
     };
     $("#local-app-x").onclick = () => { store.set("local-app-off", true); $("#local-app").hidden = true; };
   }
+  window.SwagChat?.init?.({ api, esc, md, imagesIn, userText, plainLine, sepTime, hhmm, chatEntries, sendSuper, dismissPending, jumpToEntry, bindComposer, getTargetMachine: () => targetNow().machine });
   boot();
 })();

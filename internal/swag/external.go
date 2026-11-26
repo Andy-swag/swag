@@ -529,6 +529,36 @@ func (s *Server) externalByID(id string) *External {
 	return nil
 }
 
+// directCodexExternal resolves a desktop/history Codex session ("cx-<id>")
+// directly from disk without running full process discovery.
+func (s *Server) directCodexExternal(id, wantID string) *External {
+	if !conversationRe.MatchString(wantID) {
+		return nil
+	}
+	root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
+	m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+wantID+".jsonl"))
+	if len(m) == 0 {
+		return nil
+	}
+	p := m[0]
+	fi, err := os.Stat(p)
+	if err != nil {
+		return nil
+	}
+	_, cwd := codexMeta(p)
+	return &External{
+		ID:          id,
+		Kind:        "codex",
+		Cwd:         cwd,
+		Session:     wantID,
+		Updated:     fi.ModTime(),
+		CanTakeOver: true,
+		path:        p,
+		format:      "codex",
+		desktop:     true,
+	}
+}
+
 // viewableByID is for reading only: the list the page just showed is almost
 // always still there, so use it rather than look at every process again.
 func (s *Server) viewableByID(id string) *External {
@@ -540,6 +570,11 @@ func (s *Server) viewableByID(id string) *External {
 			if e.ID == id {
 				return e
 			}
+		}
+	}
+	if wantID, ok := strings.CutPrefix(id, "cx-"); ok {
+		if e := s.directCodexExternal(id, wantID); e != nil {
+			return e
 		}
 	}
 	for _, e := range s.externalSessions() {

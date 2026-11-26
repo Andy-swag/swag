@@ -1844,6 +1844,85 @@
     paint();
   }
 
+  function openMemoryImportModal(api, esc, toast, onImported) {
+    document.querySelector(".pool-modal-bg[data-mem-import]")?.remove();
+    const bg = document.createElement("div");
+    bg.className = "pool-modal-bg";
+    bg.dataset.memImport = "1";
+    let pickedFile = null;
+    let mode = "merge";
+    bg.innerHTML = `<div class="pool-modal" style="max-width:520px">
+      <div class="pool-modal-h"><h3>导入记忆 ZIP</h3><button type="button" class="icon-btn" data-mi-close title="关闭">✕</button></div>
+      <div class="pool-modal-b">
+        <p class="muted" style="margin:0 0 10px;font-size:12.5px">选择之前导出的 <code>swag-memory-*.zip</code>，先预览变更差异再确认写入；导入后会自动同步到远程 Router 与只读镜像。</p>
+        <div class="pm-grid" style="margin-bottom:10px">
+          <label class="pm-f"><span>导入方式</span><select id="mi-mode"><option value="merge">合并导入（保留本地独有文件，覆盖同名更新）</option><option value="replace">覆盖导入（与压缩包完全对齐，删除多余文件）</option></select></label>
+          <label class="pm-f"><span>选择 ZIP 文件</span><input type="file" id="mi-file" accept=".zip,application/zip"></label>
+        </div>
+        <div id="mi-preview" class="pool-empty" style="text-align:left;padding:10px 12px;font-size:12px">请选择一个 ZIP 文件以预览变更</div>
+      </div>
+      <div class="pool-modal-f">
+        <span class="grow"></span>
+        <button type="button" class="btn small" data-mi-close>取消</button>
+        <button type="button" class="btn primary small" id="mi-apply" disabled>确认导入</button>
+      </div>
+    </div>`;
+    const close = () => { document.removeEventListener("keydown", onEsc); bg.remove(); };
+    const onEsc = (ev) => { if (ev.key === "Escape") close(); };
+    document.addEventListener("keydown", onEsc);
+    document.body.appendChild(bg);
+
+    const previewEl = bg.querySelector("#mi-preview");
+    const applyBtn = bg.querySelector("#mi-apply");
+    const runReq = async (dryRun) => {
+      if (!pickedFile) return;
+      const fd = new FormData();
+      fd.append("file", pickedFile);
+      const url = `/api/super/memory/import?mode=${encodeURIComponent(mode)}${dryRun ? "&dry_run=1" : ""}`;
+      const r = await fetch(url, { method: "POST", body: fd, credentials: "same-origin" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    };
+    const preview = async () => {
+      if (!pickedFile) { applyBtn.disabled = true; return; }
+      applyBtn.disabled = true;
+      previewEl.innerHTML = "正在校验并预览压缩包差异…";
+      try {
+        const res = await runReq(true);
+        const list = (arr, label, cls) => arr.length
+          ? `<div style="margin-top:6px"><b class="${cls}">${label}（${arr.length}）</b>：<span class="mono">${esc(arr.slice(0, 12).join("、"))}${arr.length > 12 ? " …" : ""}</span></div>`
+          : "";
+        previewEl.innerHTML = `<div>模式：<b>${mode === "replace" ? "覆盖对齐" : "合并更新"}</b> · 未变化 ${res.unchanged.length} 个文件</div>`
+          + list(res.added, "新增", "ok")
+          + list(res.updated, "更新", "warn")
+          + list(res.removed, "将删除", "bad")
+          + (res.skipped?.length ? `<div class="muted" style="margin-top:6px">跳过非记忆文件 ${res.skipped.length} 个</div>` : "");
+        applyBtn.disabled = false;
+      } catch (err) {
+        previewEl.innerHTML = `<span class="bad">校验失败：${esc(err.message)}</span>`;
+      }
+    };
+
+    bg.addEventListener("click", (ev) => { if (ev.target === bg || ev.target.closest("[data-mi-close]")) close(); });
+    bg.querySelector("#mi-mode").addEventListener("change", (ev) => { mode = ev.target.value; preview(); });
+    bg.querySelector("#mi-file").addEventListener("change", (ev) => { pickedFile = ev.target.files?.[0] || null; preview(); });
+    applyBtn.addEventListener("click", async () => {
+      applyBtn.disabled = true;
+      applyBtn.textContent = "导入中…";
+      try {
+        const res = await runReq(false);
+        close();
+        toast(`记忆导入完成：新增 ${res.added.length}、更新 ${res.updated.length}` + (res.removed.length ? `、移除 ${res.removed.length}` : ""));
+        onImported?.();
+      } catch (err) {
+        toast(err.message, "attn");
+        applyBtn.disabled = false;
+        applyBtn.textContent = "确认导入";
+      }
+    });
+  }
+
   function renderLiveList(ul, live, expanded, onToggle) {
     if (!ul) return;
     if (!ul._liveBound) {
@@ -1872,5 +1951,5 @@
     ul.innerHTML = shown.map((x) => x.html).join("") + more;
   }
 
-  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton, mountRolesSection, renderLiveList };
+  window.SwagPanels = { renderUsage, renderPool, renderInbox, renderTodos, recallMsg, syncIdleReapButton, mountRolesSection, renderLiveList, openMemoryImportModal };
 })();

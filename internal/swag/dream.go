@@ -648,7 +648,7 @@ Tidy memory/ and maintain verified engineering knowledge. Every session reads th
 3. Cross-session patterns & pitfalls (memory/notes/pitfalls.md):
    - Capture hard-won lessons, recurring errors, root causes, gotchas, and exact verified commands/flags from today's logs into memory/notes/pitfalls.md (or the matching topic note), removing outdated workarounds once fixed.
    - Look for patterns across sessions: repeated requests, corrections, unstated preferences, or mistakes Swag made more than once. Write lasting behavioral adjustments into instructions.md (or a note), marked "(inferred)", backed by logs.
-   - Record what the logs show about which agent or model worked or failed on which computer in memory/notes/agents.md.
+   - Record verified agent/model availability, failure workarounds, and escalation thresholds per machine in memory/notes/agents.md (never subjective overrides of the default model).
 4. Reusable knowledge & pointers (memory/notes/):
    - File reusable findings by topic so the next similar job finds them quickly. Prefer pointers (paths, thread ids, URLs) over bulky copies; merge duplicates. Every note gets one accurate line in memory/notes/index.md.
 5. Crystallize repeatable flows into Skills, Scripts, or Pipelines:

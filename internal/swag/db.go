@@ -116,6 +116,9 @@ func loadState(db *sql.DB, home string) (*State, error) {
 			}
 		}
 	}
+	if v, ok := kv["read_cursor"]; ok {
+		st.ReadCursor = strings.TrimSpace(v)
+	}
 
 	var trig []*Trigger
 	err = loadRows(db, `SELECT data FROM (SELECT data, n FROM triggers ORDER BY n DESC LIMIT 600) ORDER BY n`, func(t *Trigger) { trig = append(trig, t) })
@@ -179,6 +182,7 @@ func saveState(db *sql.DB, st *State, deletedTimers []string) error {
 		pinned = pinned[len(pinned)-maxPinned:]
 	}
 	put(`INSERT INTO kv(k,v) VALUES('pinned',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(pinned))
+	put(`INSERT INTO kv(k,v) VALUES('read_cursor',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, st.ReadCursor)
 	for _, t := range st.Triggers {
 		put(`INSERT INTO triggers(id,n,at,status,source,thread,data) VALUES(?,?,?,?,?,?,?)
 		     ON CONFLICT(id) DO UPDATE SET status=excluded.status, data=excluded.data`,

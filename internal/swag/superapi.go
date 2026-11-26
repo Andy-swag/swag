@@ -72,6 +72,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/memory", s.superSaveMemory)
 	api("POST /api/super/dream", s.superDream)
 	api("POST /api/super/router/restart", s.superRestartRouter)
+	s.extraSuperRoutes(mux)
 	mux.HandleFunc("POST /hooks/{source}", s.webhook)
 	mux.HandleFunc("GET /api/super/quick-reply", s.superQuickReply)
 }
@@ -104,7 +105,8 @@ type superView struct {
 	// Pending: Swag's --opt and --check messages in chat:main still waiting on the human.
 	Pending []PendingItem `json:"pending"`
 	// Pinned: messages in chat:main manually pinned by the human until unpinned.
-	Pinned  []PinnedItem `json:"pinned"`
+	Pinned     []PinnedItem `json:"pinned"`
+	ReadCursor string       `json:"read_cursor,omitempty"`
 	Workers []*Worker    `json:"workers"`
 	Queued  int          `json:"queued"`
 	// QueuedRouter: those waiting for Swag itself, not for a worker.
@@ -162,6 +164,7 @@ func (s *Server) superState(ctx context.Context) superView {
 		v.Pending = []PendingItem{}
 	}
 	v.Pinned = sp.pinnedLocked()
+	v.ReadCursor = sp.st.ReadCursor
 	if v.Pinned == nil {
 		v.Pinned = []PinnedItem{}
 	}

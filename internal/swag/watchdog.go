@@ -72,21 +72,60 @@ func isWorkerRefusal(w *Worker, summary string) bool {
 	return workerRefusalRe.MatchString(summary)
 }
 
+// nextEscalationHint returns concrete respawn flags to escalate one rung up
+// when a lower-tier model or lower reasoning effort stalls or fails to solve a task.
+func nextEscalationHint(w *Worker) string {
+	if w == nil {
+		return "--model tier-standard"
+	}
+	model, effort := strings.ToLower(strings.TrimSpace(w.Model)), strings.ToLower(strings.TrimSpace(w.Effort))
+	if w.Run != nil {
+		if model == "" {
+			model = strings.ToLower(strings.TrimSpace(w.Run[0]))
+		}
+		if effort == "" {
+			effort = strings.ToLower(strings.TrimSpace(w.Run[1]))
+		}
+	}
+	switch model {
+	case "tier-fast":
+		if w.AuthProfile != "" {
+			return fmt.Sprintf("--auth-profile %s --model tier-standard", w.AuthProfile)
+		}
+		return "--model tier-standard"
+	case "tier-standard":
+		if w.AuthProfile != "" {
+			return fmt.Sprintf("--auth-profile %s --model tier-strong", w.AuthProfile)
+		}
+		return "--model tier-strong"
+	}
+	switch effort {
+	case "minimal", "low":
+		return "--effort medium"
+	case "", "medium":
+		return "--effort high"
+	case "high":
+		return "--effort xhigh"
+	}
+	return "--auth-profile swag-pool --model tier-strong"
+}
+
 func (sp *Super) handleWorkerNonProgressLocked(w *Worker, summary string) bool {
 	age := time.Since(w.CreatedAt)
 	if age < 20*time.Second && w.ReportAt.IsZero() && isStartupBannerOnly(summary) {
 		return true
 	}
+	esc := nextEscalationHint(w)
 	if isWorkerRefusal(w, summary) {
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (safety/prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct engineering brief using a different model from the pool (e.g. --auth-profile swag-pool --model tier-standard), or clearly report the blocker to the human.", w.Name, summary, w.Name), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/误拒，需换模型重派", w.Name, "error")
+			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (safety/prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct engineering brief using an escalated/alternate model (%s, or --auth-profile swag-pool --model tier-standard), or clearly report the blocker to the human.", w.Name, summary, w.Name, esc), "", "", w.Name)
+		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/误拒，需升级/换模型重派", w.Name, "error")
 		return true
 	}
 	if age < 90*time.Second && w.ReportAt.IsZero() && strings.TrimSpace(summary) != "" {
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s finished its first turn in %ds with ZERO swag report (possible refusal, missing repo/context, or incomplete run). Last message:\n%s\nDo NOT stay silent: verify whether the job actually ran; if not, stop/respawn with the right role/machine/model or tell the human the concrete blocker.", w.Name, int(age.Seconds()), summary), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 首轮未回报，待核查", w.Name, "done")
+			fmt.Sprintf("worker %s finished its first turn in %ds with ZERO swag report (possible refusal, missing repo/context, or model capability limit). Last message:\n%s\nDo NOT stay silent: verify whether the job actually ran; if the current model/effort couldn't handle it, stop and respawn escalated (%s), or tell the human the concrete blocker.", w.Name, int(age.Seconds()), summary, esc), "", "", w.Name)
+		sp.addEntryLocked("event", w.Thread, w.Name+" 首轮未回报，待核查/升级", w.Name, "done")
 		return true
 	}
 	return false
