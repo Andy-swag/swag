@@ -609,6 +609,16 @@ func TestWatchdogCatchesEmptyPromiseRefusalAndOrphanTasks(t *testing.T) {
 		t.Fatalf("expected worker refusal to be intercepted by watchdog")
 	}
 
+	// 2b. Startup banner (~500 chars) within 20s is silently ignored without spamming turn-done.
+	freshWk := &Worker{Name: "fresh-wk", Thread: mainThread, CreatedAt: time.Now().Add(-8 * time.Second)}
+	banner := "$ codex -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox\n  >_ OpenAI Codex (v0.169.0)\n     ~/workspace/demo\n  permissions: YOLO mode\n  Tip: Switch models or reasoning effort quickly with /model.\n› Ask Codex to do anything\n" + strings.Repeat(" ", 260)
+	sp.mu.Lock()
+	bannerIgnored := sp.handleWorkerNonProgressLocked(freshWk, banner)
+	sp.mu.Unlock()
+	if !bannerIgnored {
+		t.Fatalf("expected ~500-char startup banner within 20s to be silently filtered")
+	}
+
 	// 3. Orphan open task scan alerts stale unowned quota-audit, skips approval-wait.
 	alerted := sp.checkOrphanOpenTasks(time.Now())
 	if len(alerted) != 1 || alerted[0] != "quota-audit" {

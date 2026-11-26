@@ -43,7 +43,7 @@ func resetWatchdogState() {
 
 func isStartupBannerOnly(summary string) bool {
 	s := strings.TrimSpace(summary)
-	if s == "" || len(s) > 420 {
+	if s == "" || len(s) > 1200 {
 		return false
 	}
 	return bannerOnlyRe.MatchString(s) && !strings.Contains(s, "REPORT") && !strings.Contains(s, "BLOCKED")
