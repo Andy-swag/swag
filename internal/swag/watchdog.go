@@ -19,7 +19,7 @@ const (
 var (
 	emptyPromiseRe = regexp.MustCompile(`(?i)(下一步由我|接下来(我会|我去|将)|我会.*(查|核实|核验|继续|跟进|处理|补)|仍待(核|查|验证|证)|还欠|还没做完|目前(也)?没有后台|稍后(再)?(查|核|补|跟进)|will check|i'?ll (check|investigate|follow up|verify) next)`)
 	waitingHumanRe = regexp.MustCompile(`(?i)(等你|等主人|请(你|主人|您).*(确认|批准|回复|提供|决定|刷新|操作)|需要你|等待(用户|主人|审批|确认|人工|根因修复|进一步证据)|待(审批|确认|主人|用户)|已通知|awaiting (your|human|user))`)
-	workerRefusalRe = regexp.MustCompile(`(?i)(无法将.*系统事件视为.*授权|不能将.*系统事件视为.*授权|不会据此访问.*平台|向外部进程发送|prompt injection|untrusted system event|cannot treat.*system event.*authorization|refuse to (execute|run|access))`)
+	workerRefusalRe = regexp.MustCompile(`(?i)(无法将.*系统事件视为.*授权|不能将.*系统事件视为.*授权|不会据此访问.*平台|向外部进程发送|不会对.*内部环境开展|不会.*(定向探查|探测|扫描).*内部|暴露服务拓扑|安全控制弱点|prompt injection|untrusted system event|cannot treat.*system event.*authorization|refuse to (execute|run|access)|cannot (probe|scan|inspect).*internal)`)
 	bannerOnlyRe   = regexp.MustCompile(`(?i)(OpenAI Codex|Ask Codex to do anything|YOLO mode|Claude Code)`)
 )
 
@@ -57,16 +57,67 @@ func isWorkerRefusal(w *Worker, summary string) bool {
 }
 
 func (sp *Super) handleWorkerNonProgressLocked(w *Worker, summary string) bool {
-	if time.Since(w.CreatedAt) < 20*time.Second && w.ReportAt.IsZero() && isStartupBannerOnly(summary) {
+	age := time.Since(w.CreatedAt)
+	if age < 20*time.Second && w.ReportAt.IsZero() && isStartupBannerOnly(summary) {
 		return true
 	}
 	if isWorkerRefusal(w, summary) {
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (likely prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct task brief (avoid pasting raw event headers like 't123'), or switch agent/model, or report the blocker to the human.", w.Name, summary, w.Name), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/空退，需重派", w.Name, "error")
+			fmt.Sprintf("worker %s REFUSED/stalled without executing the task (safety/prompt-injection false positive, 0 reports):\n%s\nDo NOT stay silent: stop %s and respawn with a clean, direct engineering brief on the right machine/role (or switch engine/model, e.g. claude or swag-pool), or clearly report the blocker to the human.", w.Name, summary, w.Name), "", "", w.Name)
+		sp.addEntryLocked("event", w.Thread, w.Name+" 拒跑/误拒，需换路或重派", w.Name, "error")
+		return true
+	}
+	if age < 90*time.Second && w.ReportAt.IsZero() && strings.TrimSpace(summary) != "" {
+		sp.ingestLocked("worker", w.Thread, w.Name,
+			fmt.Sprintf("worker %s finished its first turn in %ds with ZERO swag report (possible refusal, missing repo/context, or incomplete run). Last message:\n%s\nDo NOT stay silent: verify whether the job actually ran; if not, stop/respawn with the right role/machine/model or tell the human the concrete blocker.", w.Name, int(age.Seconds()), summary), "", "", w.Name)
+		sp.addEntryLocked("event", w.Thread, w.Name+" 首轮未回报，待核查", w.Name, "done")
 		return true
 	}
 	return false
+}
+
+// formatDeliveryPrompt renders the prompt sent to router or workers.
+// A worker's initial system brief is sent directly without the "[swag] 1 new event"
+// wrapper or 700-rune spill truncation so it isn't misclassified as an injected event
+// and never loses its trailing report instructions.
+func formatDeliveryPrompt(target, sessionStart string, list []*Trigger, words int) string {
+	if target != routerName && len(list) == 1 && list[0].Source == "system" && strings.HasPrefix(strings.TrimSpace(list[0].Text), "You are worker ") {
+		text := strings.TrimSpace(list[0].Text)
+		if r := []rune(text); len(r) > 4000 {
+			text = string(r[:4000]) + fmt.Sprintf("\n… [truncated; run `swag show %s`]", list[0].ID)
+		}
+		return text + "\n"
+	}
+	var b strings.Builder
+	if sessionStart != "" {
+		b.WriteString(sessionStart)
+		b.WriteString("\n")
+	}
+	if len(list) == 1 {
+		b.WriteString("[swag] 1 new event\n")
+	} else {
+		fmt.Fprintf(&b, "[swag] %d new events (batched)\n", len(list))
+	}
+	for _, t := range list {
+		fmt.Fprintf(&b, "\n#%s · %s · %s", t.ID, t.Thread, t.Source)
+		if t.From != "" {
+			fmt.Fprintf(&b, " · from %s", t.From)
+		}
+		if t.Action == "candidate" {
+			b.WriteString(" · candidate (act only if a rule or memory says so; otherwise stay silent)")
+		}
+		fmt.Fprintf(&b, " · %s\n", t.At.Format("15:04"))
+		text := strings.TrimSpace(t.Text)
+		if r := []rune(text); len(r) > 700 {
+			text = string(r[:700]) + fmt.Sprintf(" … [spilled; run `swag show %s`]", t.ID)
+		}
+		b.WriteString(indent(text, "  "))
+		b.WriteString("\n")
+	}
+	if target == routerName {
+		fmt.Fprintf(&b, "\nReply with `swag reply`, usually ≤%d characters.", words)
+	}
+	return b.String()
 }
 
 func isEmptyPromiseReply(e *Entry) bool {

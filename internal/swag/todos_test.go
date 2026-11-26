@@ -619,6 +619,22 @@ func TestWatchdogCatchesEmptyPromiseRefusalAndOrphanTasks(t *testing.T) {
 		t.Fatalf("expected ~500-char startup banner within 20s to be silently filtered")
 	}
 
+	// 2c. Safety over-refusal ("不会对指定内部环境开展...定向探查") is intercepted as refusal.
+	wk2 := &Worker{Name: "env-check", Thread: mainThread, CreatedAt: time.Now().Add(-30 * time.Second)}
+	sp.mu.Lock()
+	refused2 := sp.handleWorkerNonProgressLocked(wk2, "我不会对指定内部环境开展可能暴露服务拓扑、跨域访问路径或安全控制弱点的定向探查。")
+	sp.mu.Unlock()
+	if !refused2 {
+		t.Fatalf("expected internal-environment safety over-refusal to be intercepted")
+	}
+
+	// 2d. Worker initial brief is delivered cleanly without "[swag] 1 new event" wrapper or 700-rune spill.
+	longBrief := "You are worker \"demo-wk\" (thread chat:main), started locally:\n\n" + strings.Repeat("检查本地仓库依赖版本与配置文件。", 60) + "\nNotes: use swag report"
+	prompt := formatDeliveryPrompt("demo-wk", "", []*Trigger{{ID: "t99", Source: "system", Thread: mainThread, Text: longBrief, At: time.Now()}}, 200)
+	if strings.Contains(prompt, "[swag] 1 new event") || strings.Contains(prompt, "[spilled;") || !strings.Contains(prompt, "use swag report") {
+		t.Fatalf("worker initial brief should be delivered raw without wrapper or 700-rune spill, got: %q", prompt[:min(len(prompt), 200)])
+	}
+
 	// 3. Orphan open task scan alerts stale unowned quota-audit, skips approval-wait.
 	alerted := sp.checkOrphanOpenTasks(time.Now())
 	if len(alerted) != 1 || alerted[0] != "quota-audit" {

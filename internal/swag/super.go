@@ -580,37 +580,11 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 	words := sp.st.Settings.ReplyChars
 	sp.mu.Unlock()
 
-	var b strings.Builder
+	sessionStart := ""
 	if fresh {
-		b.WriteString(sp.sessionStart())
-		b.WriteString("\n")
+		sessionStart = sp.sessionStart()
 	}
-	if len(list) == 1 {
-		b.WriteString("[swag] 1 new event\n")
-	} else {
-		fmt.Fprintf(&b, "[swag] %d new events (batched)\n", len(list))
-	}
-	for _, t := range list {
-		fmt.Fprintf(&b, "\n#%s · %s · %s", t.ID, t.Thread, t.Source)
-		if t.From != "" {
-			fmt.Fprintf(&b, " · from %s", t.From)
-		}
-		if t.Action == "candidate" {
-			b.WriteString(" · candidate (act only if a rule or memory says so; otherwise stay silent)")
-		}
-		fmt.Fprintf(&b, " · %s\n", t.At.Format("15:04"))
-		text := strings.TrimSpace(t.Text)
-		if len([]rune(text)) > 700 { // Inline & Spill
-			text = string([]rune(text)[:700]) + fmt.Sprintf(" … [spilled; run `swag show %s`]", t.ID)
-		}
-		b.WriteString(indent(text, "  "))
-		b.WriteString("\n")
-	}
-	if target == routerName {
-		fmt.Fprintf(&b, "\nReply with `swag reply`, usually ≤%d characters.", words)
-	}
-
-	err := sp.s.herdr.Prompt(ctx, target, b.String())
+	err := sp.s.herdr.Prompt(ctx, target, formatDeliveryPrompt(target, sessionStart, list, words))
 	var he *HerdrError
 	if err != nil && errors.As(err, &he) && (he.Code == "agent_blocked" || he.Code == "agent_not_ready") {
 		return
