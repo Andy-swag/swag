@@ -3700,7 +3700,7 @@
     // an unchanged card would replay its entrance and make it jump.
     if (html !== box._html) {
       box._html = html;
-      box.innerHTML = html;
+      window.SwagChat?.patchAskBox ? window.SwagChat.patchAskBox(box, html) : (box.innerHTML = html);
     }
     // The counters tick every second: only their text changes.
     const meta = box.querySelector(".live-working .meta");

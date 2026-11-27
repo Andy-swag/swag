@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -444,9 +445,48 @@ func (s *Server) codexBgSend(ctx context.Context, thread, text string) error {
 	return s.codexDaemonSend(ctx, thread, text, true)
 }
 
+var errCodexQueued = errors.New("codex_queued")
+
+func (s *Server) hasCodexQueue() bool {
+	return isFile(filepath.Join(s.codexHome(), "queue_1.sqlite")) && findBin("codex", s.home) != ""
+}
+
+// codexQueueSend delivers a follow-up message via Codex's official `codex queue`
+// CLI into ~/.codex/queue_1.sqlite, which Codex Desktop App, VS Code Codex, and
+// codex-daemon all watch — avoiding thread-writer-lock conflicts on open threads.
+func (s *Server) codexQueueSend(ctx context.Context, thread, text string, resume bool) error {
+	bin := findBin("codex", s.home)
+	if bin == "" {
+		return errors.New("找不到 codex 命令，无法入队消息")
+	}
+	args := []string{"queue", "--thread", thread, "--message", text}
+	if resume {
+		args = append(args, "--resume")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, args...)
+	cmd.Dir = s.home
+	cmd.Env = append(os.Environ(), "CODEX_HOME="+s.codexHome())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("codex queue 失败：%s", clip(msg, 240))
+	}
+	return nil
+}
+
 func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle bool) error {
 	sock := s.codexDaemonSock()
 	if sock == "" {
+		if s.hasCodexQueue() {
+			if err := s.codexQueueSend(ctx, thread, text, true); err == nil {
+				return errCodexQueued
+			}
+		}
 		return errors.New("这台电脑上没有运行 Codex 后台")
 	}
 	c, err := dialCodex(ctx, sock)
@@ -464,7 +504,10 @@ func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle 
 	}
 	if err := c.call("thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}, nil); err != nil {
 		if strings.Contains(err.Error(), "active writer") || strings.Contains(err.Error(), "live local writer") {
-			return errors.New("这个对话正在 Codex 里打开着：在 Codex 里切到别的对话再发，或直接在 Codex 里说")
+			if qerr := s.codexQueueSend(ctx, thread, text, false); qerr == nil {
+				return errCodexQueued
+			}
+			return errors.New("这个对话正在 Codex 桌面版里锁着，且自动入队失败：请退出 Codex 桌面版释放写锁，或直接在 Codex 里说")
 		}
 		return err
 	}
@@ -624,8 +667,19 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			send = s.codexAppSend
 		case "bg":
 			send = s.codexBgSend
+		case "queue":
+			send = func(ctx context.Context, thread, text string) error {
+				if err := s.codexQueueSend(ctx, thread, text, true); err != nil {
+					return err
+				}
+				return errCodexQueued
+			}
 		}
 		if err := send(ctx, e.Session, text); err != nil {
+			if errors.Is(err, errCodexQueued) {
+				writeJSON(w, 200, map[string]any{"ok": true, "note": "已排入 Codex 队列：打开着的 Codex 桌面版/插件会自动接收并继续执行"})
+				return
+			}
 			fail(w, err)
 			return
 		}

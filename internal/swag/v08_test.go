@@ -186,3 +186,55 @@ func TestReadCursorMonotonicPersistence(t *testing.T) {
 		t.Fatalf("expected persisted ReadCursor e155, got %q", reloaded.ReadCursor)
 	}
 }
+
+func TestParseApprovalStripsTickingWorkingLine(t *testing.T) {
+	s1 := "Queued follow-up inputs?\nRan check command\n• Working (8m 16s · esc to interrupt)\n1 question shift+← to answer"
+	s2 := "Queued follow-up inputs?\nRan check command\n• Working (8m 17s · esc to interrupt)\n1 question shift+← to answer"
+	a1 := parseApproval(s1)
+	a2 := parseApproval(s2)
+	if a1.Question != a2.Question {
+		t.Fatalf("ticking working line should not change approval question:\n a1=%q\n a2=%q", a1.Question, a2.Question)
+	}
+	if strings.Contains(a1.Question, "Working (8m") {
+		t.Fatalf("expected Working timer line stripped from question, got %q", a1.Question)
+	}
+}
+
+func TestCodexQueueSendInvokesOfficialCLI(t *testing.T) {
+	dir := t.TempDir()
+	codexHome := filepath.Join(dir, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "queue_1.sqlite"), []byte("sqlite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "codex-args.txt")
+	fakeBin := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + logPath + "\"\n"
+	if err := os.WriteFile(fakeBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("CODEX_HOME", codexHome)
+	binCache.Delete("codex")
+	t.Cleanup(func() { binCache.Delete("codex") })
+
+	s := &Server{home: dir}
+	if !s.hasCodexQueue() {
+		t.Fatalf("expected hasCodexQueue() to detect queue_1.sqlite + codex bin")
+	}
+	if err := s.codexQueueSend(t.Context(), "01a0bd9b-0000-7000-8000-000000000001", "hello from swag", true); err != nil {
+		t.Fatalf("codexQueueSend err = %v", err)
+	}
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{"queue", "--thread", "01a0bd9b-0000-7000-8000-000000000001", "--message", "hello from swag", "--resume"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in codex queue args:\n%s", want, got)
+		}
+	}
+}

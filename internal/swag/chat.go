@@ -780,7 +780,14 @@ func parseApproval(screen string) Approval {
 		}
 	}
 	if end < 0 {
-		a.Question = strings.Join(tailSlice(trimBlank(lines), 6), "\n")
+		var stable []string
+		for _, l := range trimBlank(lines) {
+			if liveHint.MatchString(l) {
+				continue
+			}
+			stable = append(stable, l)
+		}
+		a.Question = strings.Join(tailSlice(stable, 6), "\n")
 		return a
 	}
 	start := end

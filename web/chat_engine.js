@@ -65,11 +65,16 @@
           nextNodes.push(existing);
           continue;
         }
-        // Preserve any expanded fold toggle inside the node.
+        // Preserve any expanded fold toggle inside the node, and suppress
+        // re-playing entrance animations when patching an existing .ask card.
         const wasUnfolded = existing.classList?.contains("is-unfolded");
         cand._swagKey = k;
         cand._swagHash = sig;
         if (wasUnfolded) cand.classList.add("is-unfolded");
+        if (cand.classList?.contains("ask") || cand.classList?.contains("needs")) {
+          cand.querySelectorAll?.(".ask").forEach((a) => a.classList.add("no-rise"));
+          if (cand.classList.contains("ask")) cand.classList.add("no-rise");
+        }
         nextNodes.push(cand);
         changed = true;
       } else {
@@ -489,9 +494,33 @@
   const focusActBtn = (id, esc) =>
     `<button type="button" class="focus-btn" data-focus-topic="${esc(id)}" title="在话题抽屉中专注查看" aria-label="专注话题">${ICON_FOCUS}</button>`;
 
+  // Patch an existing .ask dialog box in-place so ticking screen updates never
+  // destroy the wrapper or replay its CSS entrance animation ("rise").
+  function patchAskBox(box, html) {
+    if (!box) return;
+    const curAsk = box.firstElementChild?.classList?.contains("ask") ? box.firstElementChild : null;
+    if (curAsk && html) {
+      patchTpl.innerHTML = html;
+      const nextAsk = patchTpl.content.firstElementChild;
+      if (nextAsk?.classList?.contains("ask")) {
+        const prevCtxTop = curAsk.querySelector(".ctx")?.scrollTop || 0;
+        const prevRawTop = curAsk.querySelector(".ask-raw")?.scrollTop || 0;
+        curAsk.classList.add("no-rise");
+        curAsk.innerHTML = nextAsk.innerHTML;
+        const ctxEl = curAsk.querySelector(".ctx");
+        if (ctxEl && prevCtxTop) ctxEl.scrollTop = prevCtxTop;
+        const rawEl = curAsk.querySelector(".ask-raw");
+        if (rawEl && prevRawTop) rawEl.scrollTop = prevRawTop;
+        return;
+      }
+    }
+    box.innerHTML = html;
+  }
+
   window.SwagChat = {
     init,
     patchHTML,
+    patchAskBox,
     updateServerCursor,
     unreadDividerAfter,
     markReadAtBottom,

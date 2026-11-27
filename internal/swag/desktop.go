@@ -129,11 +129,17 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				e.CanSend = true
 			case isCodexApp(d.app) && !d.running && s.codexDaemonSock() != "":
 				// The new App (and a closed one) can't be written to; the
-				// shared daemon continues the thread instead.
+				// shared daemon continues the thread instead (falling back to
+				// `codex queue` when the App holds a writer lock).
 				e.CanSend, e.via = true, "bg"
 				// The CLI shares ~/.codex with the App: `codex resume` picks
 				// the thread up in a herdr pane too.
 				e.CanTakeOver = e.Session != "" && e.Cwd != ""
+			case isCodexApp(d.app) && s.hasCodexQueue():
+				// Running or daemonless Codex Desktop threads still accept
+				// queued follow-ups via `~/.codex/queue_1.sqlite`.
+				e.CanSend, e.via = true, "queue"
+				e.CanTakeOver = !d.running && e.Session != "" && e.Cwd != ""
 			case isCodexApp(d.app) && d.running:
 				e.ReadOnly = "Codex 正在跑这个对话：等它这一轮跑完再发，或直接在 Codex 里说"
 			case isCodexApp(d.app):
