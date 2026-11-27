@@ -175,3 +175,71 @@ func TestLarkCardCustomPromptFormAndCallbackParse(t *testing.T) {
 		t.Fatalf("unexpected parsed button action: ok=%v act=%+v", ok, act2)
 	}
 }
+
+func TestSplitLarkBatchesSeparatesInteractiveItems(t *testing.T) {
+	// Plain info notices stay coalesced in one card.
+	plain := []notice{{text: "任务 A 完成"}, {text: "任务 B 完成"}}
+	if got := splitLarkBatches(plain); len(got) != 1 || len(got[0]) != 2 {
+		t.Fatalf("plain notices should stay in 1 card, got %d batches", len(got))
+	}
+	// Summary + 1 interactive item stays in 1 card.
+	single := []notice{{text: "早报"}, {text: "待办 1", entryID: "e1", options: []string{"做", "跳过"}}}
+	if got := splitLarkBatches(single); len(got) != 1 || len(got[0]) != 2 {
+		t.Fatalf("single interactive item should stay in 1 card, got %d batches", len(got))
+	}
+	// Summary + 3 interactive items split into 1 summary card + 3 standalone interactive cards.
+	multi := []notice{
+		{text: "整理记忆完成"},
+		{text: "可做成 skill：A", entryID: "e1", options: []string{"做成 skill", "先不用"}},
+		{text: "可固化脚本：B", entryID: "e2", options: []string{"派人固化", "先不用"}},
+		{text: "可更新文档：C", entryID: "e3", options: []string{"派人更新", "先不用"}},
+	}
+	batches := splitLarkBatches(multi)
+	if len(batches) != 4 {
+		t.Fatalf("expected 4 cards (1 summary + 3 interactive), got %d", len(batches))
+	}
+	for i := 1; i <= 3; i++ {
+		if len(batches[i]) != 1 || !batches[i][0].needsYou() {
+			t.Fatalf("batch %d should be 1 standalone interactive card, got %+v", i, batches[i])
+		}
+	}
+}
+
+func TestLarkCardPartialUpdatePreservesOtherItems(t *testing.T) {
+	prev := larkCallbackActive.Swap(true)
+	t.Cleanup(func() { larkCallbackActive.Store(prev) })
+
+	ns := []notice{
+		{text: "待办一：发布版本", entryID: "e201", options: []string{"批准", "暂缓"}},
+		{text: "待办二：补写文档", entryID: "e202", options: []string{"派人写", "跳过"}},
+	}
+	initial := larkCard(ns, "http://hub:7788/#/swag")
+	if !strings.Contains(initial, `"cid":"c`) {
+		t.Fatalf("expected card state cid embedded in callback buttons: %s", initial)
+	}
+
+	// Answering e201 must keep e202 and its buttons intact, with orange remaining header.
+	afterFirst, ok := markLarkCardAnswered("", "e201", "批准")
+	if !ok {
+		t.Fatalf("expected card state lookup by entryID e201")
+	}
+	for _, want := range []string{"还有 1 项待确认", `"template":"orange"`, "已确认：「批准」", "待办二：补写文档", `"opt":"派人写"`} {
+		if !strings.Contains(afterFirst, want) {
+			t.Fatalf("after first confirm missing %q in:\n%s", want, afterFirst)
+		}
+	}
+	if strings.Contains(afterFirst, `"opt":"批准"`) {
+		t.Fatalf("confirmed item e201 should no longer render action buttons:\n%s", afterFirst)
+	}
+
+	// Answering e202 flips card green while keeping both items' confirmations visible.
+	afterSecond, ok := markLarkCardAnswered("", "e202", "派人写")
+	if !ok {
+		t.Fatalf("expected card state lookup by entryID e202")
+	}
+	for _, want := range []string{"Swag · 已确认", `"template":"green"`, "已确认：「批准」", "已确认：「派人写」"} {
+		if !strings.Contains(afterSecond, want) {
+			t.Fatalf("after second confirm missing %q in:\n%s", want, afterSecond)
+		}
+	}
+}

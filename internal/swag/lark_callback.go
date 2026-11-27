@@ -24,7 +24,82 @@ var (
 	larkCardSeen       = map[string]time.Time{}
 	larkCardSumMu      sync.Mutex
 	larkCardSum        = map[string]string{}
+	larkCardStateMu    sync.Mutex
+	larkCardSeq        atomic.Int64
+	larkCardStates     = map[string]*larkCardState{}
+	larkCardByRe       = map[string]string{}
 )
+
+type larkCardState struct {
+	ID       string
+	Notices  []notice
+	Link     string
+	Answered map[string]string
+	At       time.Time
+}
+
+func rememberLarkCardState(ns []notice, link string) string {
+	hasAction := false
+	for _, n := range ns {
+		if n.needsYou() {
+			hasAction = true
+			break
+		}
+	}
+	if !hasAction {
+		return ""
+	}
+	cid := fmt.Sprintf("c%d_%d", time.Now().Unix(), larkCardSeq.Add(1))
+	cp := make([]notice, len(ns))
+	copy(cp, ns)
+	st := &larkCardState{ID: cid, Notices: cp, Link: link, Answered: map[string]string{}, At: time.Now()}
+	larkCardStateMu.Lock()
+	if len(larkCardStates) > 200 {
+		for k, v := range larkCardStates {
+			if time.Since(v.At) > 48*time.Hour {
+				delete(larkCardStates, k)
+			}
+		}
+	}
+	larkCardStates[cid] = st
+	for _, n := range cp {
+		if n.entryID != "" {
+			larkCardByRe[n.entryID] = cid
+		}
+	}
+	larkCardStateMu.Unlock()
+	return cid
+}
+
+func markLarkCardAnswered(cid, re, opt string) (string, bool) {
+	larkCardStateMu.Lock()
+	defer larkCardStateMu.Unlock()
+	if cid == "" && re != "" {
+		cid = larkCardByRe[re]
+	}
+	st := larkCardStates[cid]
+	if st == nil {
+		return "", false
+	}
+	key := re
+	if key == "" {
+		for i, n := range st.Notices {
+			k := larkNoticeKey(n, i)
+			if n.needsYou() && st.Answered[k] == "" {
+				key = k
+				break
+			}
+		}
+	}
+	if key != "" {
+		st.Answered[key] = opt
+	}
+	ansCopy := make(map[string]string, len(st.Answered))
+	for k, v := range st.Answered {
+		ansCopy[k] = v
+	}
+	return renderLarkCard(st.Notices, st.Link, st.ID, ansCopy), true
+}
 
 func rememberLarkSummary(re, summary string) {
 	if re == "" || summary == "" {
@@ -149,6 +224,7 @@ func (s *Server) runLarkCardConsumer(ctx context.Context, bin, hubBase string) e
 type larkCardAction struct {
 	EventID string
 	Token   string
+	CardID  string
 	Re      string
 	Text    string
 	URL     string
@@ -210,6 +286,7 @@ func parseLarkCardAction(raw string) (larkCardAction, bool) {
 		return larkCardAction{}, false
 	}
 	var val struct {
+		CardID  string `json:"cid"`
 		Re      string `json:"re"`
 		Opt     string `json:"opt"`
 		URL     string `json:"url"`
@@ -218,7 +295,7 @@ func parseLarkCardAction(raw string) (larkCardAction, bool) {
 	if json.Unmarshal([]byte(ev.ActionValue), &val) != nil || strings.TrimSpace(val.Opt) == "" {
 		return larkCardAction{}, false
 	}
-	act.Re, act.Text, act.URL, act.Summary = val.Re, strings.TrimSpace(val.Opt), val.URL, val.Summary
+	act.CardID, act.Re, act.Text, act.URL, act.Summary = val.CardID, val.Re, strings.TrimSpace(val.Opt), val.URL, val.Summary
 	return act, true
 }
 
@@ -306,21 +383,23 @@ func (s *Server) handleLarkCardEvent(ctx context.Context, bin, hubBase, raw stri
 	}
 
 	if delivered && act.Token != "" {
-		s.updateLarkCardConfirmed(ctx, bin, act.Token, act.Summary, act.Text)
+		s.updateLarkCardConfirmed(ctx, bin, act)
 	}
 }
 
-func (s *Server) updateLarkCardConfirmed(ctx context.Context, bin, token, summary, opt string) {
-	body := ""
-	if strings.TrimSpace(summary) != "" {
-		body = strings.TrimSpace(summary) + "\n\n"
-	}
-	body += "✅ **已确认：「" + larkEscape(opt) + "」**\n<font color='grey'>Swag 已收到并继续推进</font>"
-	payload, _ := json.Marshal(map[string]any{
-		"token": token,
-		"card": map[string]any{
+func (s *Server) updateLarkCardConfirmed(ctx context.Context, bin string, act larkCardAction) {
+	var cardRaw json.RawMessage
+	if updated, ok := markLarkCardAnswered(act.CardID, act.Re, act.Text); ok {
+		cardRaw = json.RawMessage(updated)
+	} else {
+		body := ""
+		if strings.TrimSpace(act.Summary) != "" {
+			body = strings.TrimSpace(act.Summary) + "\n\n"
+		}
+		body += "✅ **已确认：「" + larkEscape(act.Text) + "」**\n<font color='grey'>Swag 已收到并继续推进</font>"
+		b, _ := json.Marshal(map[string]any{
 			"schema": "2.0",
-			"config": map[string]any{"summary": map[string]string{"content": "已确认：" + clip(opt, 40)}},
+			"config": map[string]any{"summary": map[string]string{"content": "已确认：" + clip(act.Text, 40)}},
 			"header": map[string]any{
 				"title":    map[string]string{"tag": "plain_text", "content": "Swag · 已确认"},
 				"template": "green",
@@ -328,7 +407,12 @@ func (s *Server) updateLarkCardConfirmed(ctx context.Context, bin, token, summar
 			"body": map[string]any{
 				"elements": []any{map[string]any{"tag": "markdown", "content": body}},
 			},
-		},
+		})
+		cardRaw = json.RawMessage(b)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"token": act.Token,
+		"card":  cardRaw,
 	})
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

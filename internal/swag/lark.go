@@ -112,6 +112,42 @@ func larkJumpURL(raw string) string {
 	return u.String()
 }
 
+// splitLarkBatches keeps plain informational notices coalesced into one card,
+// while giving each interactive (needsYou) notice its own standalone card so
+// confirming one item can never overwrite or hide other pending items.
+func splitLarkBatches(ns []notice) [][]notice {
+	if len(ns) == 0 {
+		return nil
+	}
+	interactive := 0
+	for _, n := range ns {
+		if n.needsYou() {
+			interactive++
+		}
+	}
+	if interactive <= 1 {
+		return [][]notice{ns}
+	}
+	var out [][]notice
+	var plain []notice
+	flushPlain := func() {
+		if len(plain) > 0 {
+			out = append(out, plain)
+			plain = nil
+		}
+	}
+	for _, n := range ns {
+		if n.needsYou() {
+			flushPlain()
+			out = append(out, []notice{n})
+		} else {
+			plain = append(plain, n)
+		}
+	}
+	flushPlain()
+	return out
+}
+
 // larkSend writes to the logged-in user, as the bot (a message from yourself
 // would not ring): a card, or plain text if the card is turned down.
 func larkSend(ns []notice, link string) error {
@@ -129,20 +165,29 @@ func larkSend(ns []notice, link string) error {
 		}
 		return nil
 	}
-	err := send("--msg-type", "interactive", "--content", larkCard(ns, jumpLink))
-	if err == nil {
-		return nil
+	for _, batch := range splitLarkBatches(ns) {
+		err := send("--msg-type", "interactive", "--content", larkCard(batch, jumpLink))
+		if err == nil {
+			continue
+		}
+		text := noticesText(batch)
+		if jumpLink != "" {
+			text += "\n\n打开 Swag：" + jumpLink
+		}
+		if err2 := send("--text", text); err2 != nil {
+			lark.get(true) // logged out, or moved: look again next time
+			return err2
+		}
+		log.Printf("notify lark: card refused, sent as text: %v", err)
 	}
-	text := noticesText(ns)
-	if jumpLink != "" {
-		text += "\n\n打开 Swag：" + jumpLink
-	}
-	if err2 := send("--text", text); err2 != nil {
-		lark.get(true) // logged out, or moved: look again next time
-		return err2
-	}
-	log.Printf("notify lark: card refused, sent as text: %v", err)
 	return nil
+}
+
+func larkNoticeKey(n notice, idx int) string {
+	if n.entryID != "" {
+		return n.entryID
+	}
+	return "idx:" + strconv.Itoa(idx)
 }
 
 // larkCard is a Feishu card (JSON 2.0): the header says how much it matters
@@ -150,13 +195,36 @@ func larkSend(ns []notice, link string) error {
 // Markdown, and a button opens Swag.
 func larkCard(ns []notice, link string) string {
 	link = larkJumpURL(link)
+	cid := rememberLarkCardState(ns, link)
+	return renderLarkCard(ns, link, cid, nil)
+}
+
+func renderLarkCard(ns []notice, link, cid string, answered map[string]string) string {
+	link = larkJumpURL(link)
 	title, color := "Swag", "default" // plain white: colour only when it needs you
-	for _, n := range ns {
+	remaining := 0
+	var lastAns string
+	var unanswered []notice
+	for i, n := range ns {
+		k := larkNoticeKey(n, i)
+		if ans, ok := answered[k]; ok {
+			lastAns = ans
+			continue
+		}
+		unanswered = append(unanswered, n)
 		switch {
 		case n.needsYou():
+			remaining++
 			title, color = n.label(), "orange"
 		case n.tone == "error" && color != "orange":
 			title, color = n.label(), "red"
+		}
+	}
+	if len(answered) > 0 {
+		if remaining == 0 {
+			title, color = "Swag · 已确认", "green"
+		} else {
+			title, color = "Swag · 还有 "+strconv.Itoa(remaining)+" 项待确认", "orange"
 		}
 	}
 	var els []any
@@ -164,12 +232,19 @@ func larkCard(ns []notice, link string) string {
 		if i > 0 {
 			els = append(els, map[string]any{"tag": "hr"})
 		}
+		k := larkNoticeKey(n, i)
+		ans, done := answered[k]
 		t := clip(n.text, 1500)
 		if n.re != nil {
 			t = "<font color='grey'>↩ " + larkEscape(n.re.line()) + "</font>\n" + t
 		}
 		if len(ns) > 1 && ((n.tone != "" && n.tone != "swag") || n.needsYou()) {
 			t = "**" + n.label() + "**\n" + t
+		}
+		if done {
+			t += "\n\n✅ **已确认：「" + larkEscape(ans) + "」**\n<font color='grey'>Swag 已收到并继续推进</font>"
+			els = append(els, map[string]any{"tag": "markdown", "content": t})
+			continue
 		}
 		if len(n.options) > 0 && len(n.optionURLs) != len(n.options) {
 			var qs []string
@@ -195,14 +270,18 @@ func larkCard(ns []notice, link string) string {
 				}
 				var behav any
 				if useCB {
+					val := map[string]string{
+						"re":      n.entryID,
+						"opt":     o,
+						"url":     u,
+						"summary": clip(n.text, 600),
+					}
+					if cid != "" {
+						val["cid"] = cid
+					}
 					behav = map[string]any{
-						"type": "callback",
-						"value": map[string]string{
-							"re":      n.entryID,
-							"opt":     o,
-							"url":     u,
-							"summary": clip(n.text, 600),
-						},
+						"type":  "callback",
+						"value": val,
 					}
 				} else {
 					behav = map[string]string{"type": "open_url", "default_url": u}
@@ -252,12 +331,18 @@ func larkCard(ns []notice, link string) string {
 			"behaviors": []any{map[string]string{"type": "open_url", "default_url": link}},
 		})
 	}
+	sum := cardSummary(ns)
+	if len(answered) > 0 && remaining == 0 {
+		sum = "已确认：" + clip(lastAns, 40)
+	} else if len(unanswered) > 0 && len(answered) > 0 {
+		sum = cardSummary(unanswered)
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.Encode(map[string]any{
 		"schema": "2.0",
-		"config": map[string]any{"summary": map[string]string{"content": clip(cardSummary(ns), 60)}},
+		"config": map[string]any{"summary": map[string]string{"content": clip(sum, 60)}},
 		"header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": title}, "template": color},
 		"body":   map[string]any{"elements": els},
 	})
