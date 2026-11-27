@@ -1,6 +1,7 @@
 package swag
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ const (
 	emptyPromiseCooldown = 15 * time.Minute
 	orphanTaskStaleAfter = 45 * time.Minute
 	orphanTaskCooldown   = 2 * time.Hour
+	wedgedRouterAfter    = 4 * time.Minute
+	wedgedRouterCooldown = 15 * time.Minute
 )
 
 var (
@@ -41,9 +44,11 @@ func isAgentFatalError(line string) bool {
 
 var watchdogState = struct {
 	sync.Mutex
-	seenReply   map[string]bool
-	lastPromise time.Time
-	orphanSent  map[string]time.Time
+	seenReply         map[string]bool
+	lastPromise       time.Time
+	orphanSent        map[string]time.Time
+	routerWedgedSince time.Time
+	lastWedgedRestart time.Time
 }{
 	seenReply:  map[string]bool{},
 	orphanSent: map[string]time.Time{},
@@ -54,7 +59,52 @@ func resetWatchdogState() {
 	watchdogState.seenReply = map[string]bool{}
 	watchdogState.lastPromise = time.Time{}
 	watchdogState.orphanSent = map[string]time.Time{}
+	watchdogState.routerWedgedSince = time.Time{}
+	watchdogState.lastWedgedRestart = time.Time{}
 	watchdogState.Unlock()
+}
+
+// shouldRestartWedgedRouter tracks when a live router stays not-ready/unknown
+// while triggers are waiting to be delivered, preventing multi-hour silent stalls.
+func shouldRestartWedgedRouter(now time.Time, wedged bool) bool {
+	watchdogState.Lock()
+	defer watchdogState.Unlock()
+	if !wedged {
+		watchdogState.routerWedgedSince = time.Time{}
+		return false
+	}
+	if watchdogState.routerWedgedSince.IsZero() {
+		watchdogState.routerWedgedSince = now
+		return false
+	}
+	if now.Sub(watchdogState.routerWedgedSince) < wedgedRouterAfter {
+		return false
+	}
+	if !watchdogState.lastWedgedRestart.IsZero() && now.Sub(watchdogState.lastWedgedRestart) < wedgedRouterCooldown {
+		return false
+	}
+	watchdogState.lastWedgedRestart = now
+	watchdogState.routerWedgedSince = time.Time{}
+	return true
+}
+
+func (sp *Super) checkWedgedRouter(ctx context.Context, live map[string]liveAgent, queued []*Trigger) {
+	sp.mu.Lock()
+	paused := sp.st.Settings.Paused || sp.dream != nil || sp.handover != nil
+	sp.mu.Unlock()
+	if paused {
+		shouldRestartWedgedRouter(time.Now(), false)
+		return
+	}
+	a, alive := live[routerName]
+	wedged := alive && len(queued) > 0 && !a.Ready && (a.Status == "unknown" || a.Status == "starting")
+	if !shouldRestartWedgedRouter(time.Now(), wedged) {
+		return
+	}
+	sp.mu.Lock()
+	sp.addEntryLocked("event", mainThread, "Swag 启动超时卡住，已自动重启恢复", routerName, "error")
+	sp.mu.Unlock()
+	_ = sp.RestartRouter(ctx)
 }
 
 func isStartupBannerOnly(summary string) bool {
@@ -324,6 +374,7 @@ func (sp *Super) checkOrphanOpenTasks(now time.Time) []string {
 		sp.mu.Unlock()
 		return nil
 	}
+	hasRemoteRouter := sp.st.Settings.RouterMachine != "" && sp.st.Settings.RouterMachine != "hub"
 	activeWorkers := map[string]bool{}
 	for _, w := range sp.st.Workers {
 		if w != nil && !w.Ended {
@@ -337,6 +388,12 @@ func (sp *Super) checkOrphanOpenTasks(now time.Time) []string {
 		}
 	}
 	sp.mu.Unlock()
+
+	if hasRemoteRouter && sp.s != nil && sp.s.herdr != nil {
+		pctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		sp.PullRemoteRouterMemory(pctx, false)
+		cancel()
+	}
 
 	var alerted []string
 	for _, f := range sp.memFiles() {

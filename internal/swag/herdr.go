@@ -40,7 +40,7 @@ func unixDialer(socket string) func(ctx context.Context) (net.Conn, error) {
 func dialHerdr(ctx context.Context, socket string) (net.Conn, error) {
 	var d net.Dialer
 	c, err := d.DialContext(ctx, "unix", socket)
-	if err == nil || !startHerdrServer() {
+	if err == nil || ctx.Err() != nil || !startHerdrServer() {
 		return c, err
 	}
 	for i := 0; i < 40; i++ {

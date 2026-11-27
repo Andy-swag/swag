@@ -459,10 +459,10 @@ func splitDreamProposalList(raw string) []string {
 	depth := 0
 	for _, r := range raw {
 		switch r {
-		case '(', '（':
+		case '(', '（', '[', '【':
 			depth++
 			cur.WriteRune(r)
-		case ')', '）':
+		case ')', '）', ']', '】':
 			if depth > 0 {
 				depth--
 			}

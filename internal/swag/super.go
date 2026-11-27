@@ -528,6 +528,7 @@ func (sp *Super) tick(parent context.Context) {
 	sp.checkDream(ctx, live, len(deliveries[routerName]) > 0)
 
 	// 5. Watchdog & idle worker auto-archiver.
+	sp.checkWedgedRouter(ctx, live, deliveries[routerName])
 	sp.watchdog(ctx, live, routerAlive)
 	sp.maybeReapIdleWorkers(ctx, now)
 }
@@ -708,7 +709,7 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		// Its agent stopped it (out of quota, logged out, the API down):
 		// the turn ended, the work did not.
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s stopped on an error from its agent, not because it was done:\n%s\nLast message before it:\n%s\nIf this is a usage limit, a login or an outage, it won't get better by itself soon: hand the job to another kind of agent (spawn a fresh one with the brief and what this one got done; --resume only works with the same agent), then tell the human in one line what happened and who carries on.", w.Name, msg, summary), "", "", w.Name)
+			fmt.Sprintf("worker %s stopped on an error from its agent, not because it was done:\n%s\nLast message before it:\n%s\nIf this is an auth (401/403), usage limit, or API outage error, retry with `--auth-profile swag-pool --model tier-standard` or another working authenticated machine/profile (NEVER switch to an unauthenticated agent engine like claude if not logged in), then tell the human in one line what happened and who carries on.", w.Name, msg, summary), "", "", w.Name)
 		sp.addEntryLocked("event", w.Thread, w.Name+" 出错了："+msg, w.Name, "error")
 		return
 	}
@@ -723,7 +724,8 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 // workerQuotaRe is an agent CLI saying it can't go on: a usage limit, the
 // login, the API. Narrower than agentErrRe: a worker's screen is full of its
 // work, and "error:" there is mostly the work's own.
-var workerQuotaRe = regexp.MustCompile(`(?i)(usage limit|limit reached|hit your( \w+)? limit|reached your( \w+)? limit|quota exceeded|exceeded your( current)? quota|resource.?exhausted|daily limit|rate.?limit(ed)?\b|credit balance|out of credits|please run /login|not logged in|invalid api key|api error|overloaded|unexpected status \d{3}|try again (at|in) )`)
+var workerQuotaRe = regexp.MustCompile(`(?i)(usage limit|limit reached|hit your( \w+)? limit|reached your( \w+)? limit|quota exceeded|exceeded your( current)? quota|resource.?exhausted|daily limit|rate.?limit(ed)?\b|credit balance|out of credits|please run /login|not logged in|invalid api key|api error|overloaded|unexpected status \d{3}|401 unauthorized|403 forbidden|try again (at|in) )`)
+var workerHardAuthRe = regexp.MustCompile(`(?i)(unexpected status (401|403|429|5\d\d)|401 unauthorized|403 forbidden|invalid api key|not logged in|please run /login)`)
 
 // workerAgentError reads the bottom of a worker's terminal after a turn:
 // what its agent printed when it gave up, or "". A line that is also in its
@@ -750,8 +752,9 @@ func agentStopLine(screen, summary string) string {
 		tail = tail[len(tail)-12:]
 	}
 	for _, l := range tail {
-		if workerQuotaRe.MatchString(l) && !strings.Contains(summary, strings.Trim(l, "⎿⏺●•✗✘⚠■│ ")) {
-			return clip(strings.Trim(l, "⎿⏺●•✗✘⚠■│ "), 200)
+		trimmed := strings.Trim(l, "⎿⏺●•✗✘⚠■│ ")
+		if workerQuotaRe.MatchString(l) && (workerHardAuthRe.MatchString(l) || !strings.Contains(summary, trimmed)) {
+			return clip(trimmed, 200)
 		}
 	}
 	return ""
@@ -936,9 +939,14 @@ func (sp *Super) writeRouterFiles() error {
 	words := sp.st.Settings.ReplyChars
 	wkind := sp.st.Settings.WorkerKind
 	wcwd := sp.s.tilde(sp.st.Settings.WorkerCwd)
+	remoteRouter := sp.st.Settings.RouterMachine != "" && sp.st.Settings.RouterMachine != "hub"
 	sp.mu.Unlock()
+	binName := sp.bin
+	if remoteRouter {
+		binName = "swag"
+	}
 	layout := "   " + strings.ReplaceAll(memoryLayout, "\n", "\n   ")
-	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", sp.bin, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(routerDoc)
+	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", binName, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(routerDoc)
 	for _, name := range []string{"ROUTER.md", "CLAUDE.md", "AGENTS.md", "GEMINI.md"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(doc), 0o600); err != nil {
 			return err
@@ -1941,7 +1949,11 @@ func (sp *Super) routerSettled(ctx context.Context, pane string) {
 	sp.mu.Lock()
 	sp.routerRetries = 0 // a quiet turn, no error: it is working again
 	sp.surfaceSilentRouterReplyLocked(asked, lines, start)
+	remoteRouter := sp.st.Settings.RouterMachine != "" && sp.st.Settings.RouterMachine != "hub"
 	sp.mu.Unlock()
+	if remoteRouter {
+		go sp.PullRemoteRouterMemory(context.Background(), false)
+	}
 }
 
 // routerRetryWait: how long to wait before each retry of a turn that ended

@@ -271,8 +271,12 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				return
 			}
 		}
+		dreamBin := sp.bin
+		if targetMachine != "" {
+			dreamBin = "swag"
+		}
 		prompt := strings.ReplaceAll(dreamPrompt, "{{DATE}}", journalName(at))
-		prompt = strings.ReplaceAll(prompt, "{{BIN}}", sp.bin)
+		prompt = strings.ReplaceAll(prompt, "{{BIN}}", dreamBin)
 		prompt = strings.ReplaceAll(prompt, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10))
 		migrate := ""
 		if sp.legacyMemory() {

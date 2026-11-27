@@ -238,3 +238,47 @@ func TestCodexQueueSendInvokesOfficialCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldRestartWedgedRouter(t *testing.T) {
+	resetWatchdogState()
+	t.Cleanup(resetWatchdogState)
+
+	t0 := time.Date(2026, 11, 27, 4, 5, 0, 0, time.UTC)
+	if shouldRestartWedgedRouter(t0, true) {
+		t.Fatalf("should not restart on first wedged observation")
+	}
+	if shouldRestartWedgedRouter(t0.Add(3*time.Minute), true) {
+		t.Fatalf("should not restart before 4m threshold")
+	}
+	if !shouldRestartWedgedRouter(t0.Add(4*time.Minute+time.Second), true) {
+		t.Fatalf("expected restart once wedged > 4m")
+	}
+	// Cooldown prevents thrash-looping for 15m.
+	if shouldRestartWedgedRouter(t0.Add(5*time.Minute), true) || shouldRestartWedgedRouter(t0.Add(10*time.Minute), true) {
+		t.Fatalf("expected 15m cooldown after wedged restart")
+	}
+	// Clearing wedged resets timer cleanly.
+	if shouldRestartWedgedRouter(t0.Add(20*time.Minute), false) {
+		t.Fatalf("healthy router must not restart")
+	}
+}
+
+func TestAgentStopLineSurfaces401EvenInFallbackSummary(t *testing.T) {
+	screen := "■ unexpected status 401 Unauthorized: {\"detail\":\"Unauthorized\"}, url: https://example.com/responses\n› "
+	// Even when summary fell back to the exact same screen text, hard 401 must surface.
+	got := agentStopLine(screen, screen)
+	if !strings.Contains(got, "401 Unauthorized") {
+		t.Fatalf("expected 401 Unauthorized surfaced, got %q", got)
+	}
+}
+
+func TestSplitDreamProposalListRespectsBrackets(t *testing.T) {
+	raw := "tool-a（校验A、校验B；兼容模式）、tool-b【脚本X、脚本Y】；tool-c（单项）"
+	got := splitDreamProposalList(raw)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 top-level proposals, got %d: %#v", len(got), got)
+	}
+	if got[0] != "tool-a（校验A、校验B；兼容模式）" || got[1] != "tool-b【脚本X、脚本Y】" || got[2] != "tool-c（单项）" {
+		t.Fatalf("unexpected split result: %#v", got)
+	}
+}
